@@ -1,12 +1,12 @@
 """LegendaPRO — gerador de legendas dinâmicas.
 
 Exemplos:
-  python -m legendapro render  --video in.mp4 --preset desculpa -o out.mp4
-  python -m legendapro render  --video in.mp4 --text roteiro.txt --preset galho -o out.mp4
-  python -m legendapro plan    --words palavras.json --preset galho -o plano.json
+  python -m legendapro render  --video in.mp4 --preset preset-2 -o out.mp4
+  python -m legendapro render  --video in.mp4 --text roteiro.txt --preset preset-1 -o out.mp4
+  python -m legendapro plan    --words palavras.json --preset preset-1 -o plano.json
   python -m legendapro render  --plan plano.json --video in.mp4 -o out.mp4
-  python -m legendapro render  --words palavras.json --preset galho --alpha -o legenda.mov
-  python -m legendapro preview --video in.mp4 --preset desculpa --at 1.2 3.4 5 -o prev.jpg
+  python -m legendapro render  --words palavras.json --preset preset-1 --alpha -o legenda.mov
+  python -m legendapro preview --video in.mp4 --preset preset-2 --at 1.2 3.4 5 -o prev.jpg
 """
 import argparse
 import json
@@ -15,20 +15,12 @@ import sys
 
 import numpy as np
 
-from . import transcript
+from . import presets, transcript
 from .planner import Planner
 from .render import Renderer, render_video, probe, ROOT
 
-PRESET_DIR = os.path.join(ROOT, "presets")
-
-
-def load_preset(name):
-    path = name if name.endswith(".json") else os.path.join(PRESET_DIR, name + ".json")
-    return json.load(open(path, encoding="utf-8"))
-
-
-def list_presets():
-    return sorted(f[:-5] for f in os.listdir(PRESET_DIR) if f.endswith(".json"))
+load_preset = presets.load
+list_presets = presets.names
 
 
 def get_words(a):
@@ -128,7 +120,7 @@ def main(argv=None):
         p.add_argument("--srt", help="legenda SRT/VTT")
         p.add_argument("--text", help="texto/roteiro (com marcações opcionais) sincronizado com o vídeo")
         p.add_argument("--model", default="large-v3-turbo", help="modelo Whisper (tiny/small/medium/large-v3/large-v3-turbo)")
-        p.add_argument("--preset", default="desculpa", help=f"preset: {', '.join(list_presets())}")
+        p.add_argument("--preset", default=presets.DEFAULT, help=f"preset: {', '.join(list_presets())}")
 
     p = sub.add_parser("transcribe"); p.add_argument("--video", required=True)
     p.add_argument("--model", default="large-v3-turbo"); p.add_argument("-o", "--out", required=True)

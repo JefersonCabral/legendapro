@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LegendaPRO</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230e0c0b'/%3E%3Ctext x='32' y='44' font-family='Georgia' font-style='italic' font-weight='700' font-size='34' fill='%23e3241d' text-anchor='middle'%3EL%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230e0c0b'/%3E%3Ctext x='32' y='44' font-family='Arial, sans-serif' font-weight='700' font-size='34' fill='%23e3241d' text-anchor='middle'%3EL%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -32,17 +32,6 @@
       <button class="btn btn-primary btn-sm" id="btnNew"><span>+</span> Novo vídeo</button>
     </div>
     <div class="project-list" id="projectList"></div>
-    <div class="rail-foot">
-      <div class="legend">
-        <h3 class="eyebrow">Tipos de cena</h3>
-        <ul>
-          <li><b class="m-chunk"></b>Chunk <small>1–2 palavras, troca seca</small></li>
-          <li><b class="m-stack"></b>Pilha <small>linhas com blur + ênfase</small></li>
-          <li><b class="m-solo"></b>Solo <small>palavra grande com pop</small></li>
-          <li><b class="m-card"></b>Card <small>fundo chapado, citação</small></li>
-        </ul>
-      </div>
-    </div>
   </aside>
 
   <!-- PALCO --------------------------------------------------------->
@@ -70,6 +59,8 @@
         <div class="glow" aria-hidden="true"></div>
         <div class="phone" id="phone">
           <img id="frame" alt="Prévia do quadro">
+          <div class="hits" id="hits"></div>
+          <div class="drag-tip" id="dragTip" hidden></div>
           <video id="player" playsinline hidden></video>
           <div class="busy" id="busy" hidden>
             <div class="ring"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" class="ring-bg"/><circle cx="60" cy="60" r="52" class="ring-fg" id="ringFg"/></svg><span id="busyPct">0%</span></div>
@@ -77,6 +68,26 @@
             <p class="busy-sub" id="busySub"></p>
           </div>
           <div class="frame-loading" id="frameLoading"></div>
+        </div>
+
+        <!-- menu da palavra clicada no preview -->
+        <div class="wordpop" id="wordPop" hidden>
+          <div class="wp-head"><span id="wpCount">1 palavra</span><button class="wp-x" id="wpClose" title="Fechar (Esc)">×</button></div>
+          <label class="wp-label">Texto</label>
+          <input id="wpText" spellcheck="true" autocomplete="off" title="Corrija e aperte Enter">
+          <label class="wp-label">Efeitos</label>
+          <div class="wp-marks" id="wpMarks">
+            <button data-mark="destaque" title="Efeito principal do estilo (palavra em evidência). Acende quando a palavra já é destaque; clique para ligar ou desligar."><b class="mk-hero">Aa</b>Destaque</button>
+            <button data-mark="red" title="Destaque vermelho"><b class="mk-red">Aa</b>Vermelho</button>
+            <button data-mark="circle" title="Elipse desenhada"><b class="mk-circle">Aa</b>Elipse</button>
+            <button data-mark="underline" title="Sublinhado em traço"><b class="mk-under">Aa</b>Traço</button>
+            <button data-mark="box" title="Caixa vermelha"><b class="mk-box">Aa</b>Caixa</button>
+            <button data-mark="solo" title="Palavra solo com pop"><b class="mk-solo">Aa</b>Solo</button>
+            <button data-mark="break" title="Nova cena depois desta palavra"><b class="mk-break">|</b>Quebra</button>
+          </div>
+          <label class="wp-label">Cor</label>
+          <div class="wp-colors" id="wpColors"></div>
+          <p class="wp-hint">Shift+clique seleciona um trecho · Ctrl+clique soma palavras · Ctrl+Z desfaz</p>
         </div>
       </div>
 
@@ -99,6 +110,13 @@
         <div class="tl-head" id="tlHead"><span></span></div>
         <input type="range" id="scrub" min="0" max="1" step="0.001" value="0" aria-label="Posição">
       </div>
+      <div class="tl-legend" title="Cada bloco da linha do tempo é uma cena: o jeito como as palavras daquele trecho aparecem na tela.">
+        <span><b class="m-chunk"></b>Chunk / bloco <small>poucas palavras por vez</small></span>
+        <span><b class="m-stack"></b>Pilha / destaque <small>frase com palavra em evidência</small></span>
+        <span><b class="m-solo"></b>Solo <small>palavra grande com pop</small></span>
+        <span><b class="m-card"></b>Card <small>fundo chapado</small></span>
+        <span><b class="m-flash"></b>Flash <small>clarão entre frases</small></span>
+      </div>
       <div class="scene-now" id="sceneNow"></div>
     </div>
   </section>
@@ -117,9 +135,9 @@
         <h2>Transcrição</h2>
         <span class="save-state" id="saveState"></span>
       </div>
-      <p class="hint">Corrija o texto à vontade ou cole o seu roteiro inteiro: ele é re-sincronizado com o áudio. Selecione palavras e use os botões para forçar um efeito.</p>
+      <p class="hint"><b>Dica:</b> clique numa palavra direto no vídeo para corrigir, trocar a cor ou aplicar efeitos. Aqui você também pode editar o texto inteiro: ele é re-sincronizado com o áudio. Clicar numa palavra do texto leva o vídeo até ela.</p>
       <div class="marks" id="marks">
-        <button data-mark="emph" title="Serifada itálica de ênfase"><em class="mk-serif">Aa</em>Ênfase</button>
+        <button data-mark="emph" title="Força a palavra a virar o destaque do estilo"><b class="mk-hero">Aa</b>Destaque</button>
         <button data-mark="red" title="Destaque vermelho"><b class="mk-red">Aa</b>Vermelho</button>
         <button data-mark="circle" title="Elipse desenhada"><b class="mk-circle">Aa</b>Elipse</button>
         <button data-mark="underline" title="Sublinhado em traço"><b class="mk-under">Aa</b>Traço</button>
@@ -127,17 +145,20 @@
         <button data-mark="solo" title="Palavra solo com pop"><b class="mk-solo">Aa</b>Solo</button>
         <button data-mark="break" title="Forçar nova cena"><b class="mk-break">|</b>Quebra</button>
         <button data-mark="card" title="Trecho vira card (presets com cards)"><b class="mk-card">“”</b>Card</button>
+        <label class="mark-color" title="Cor das palavras selecionadas"><input type="color" id="markColor" value="#ffd60a"><b class="mk-color">Aa</b>Cor</label>
       </div>
       <textarea id="text" spellcheck="false" placeholder="A transcrição aparece aqui…"></textarea>
       <details class="syntax">
         <summary>Sintaxe das marcações</summary>
         <table>
-          <tr><td><code>*palavra*</code></td><td>ênfase serifada</td></tr>
+          <tr><td><code>*palavra*</code></td><td>destaque do estilo (ênfase)</td></tr>
+          <tr><td><code>{-}palavra</code></td><td>nunca vira destaque</td></tr>
           <tr><td><code>!palavra!</code></td><td>vermelho</td></tr>
           <tr><td><code>((palavra))</code></td><td>elipse</td></tr>
           <tr><td><code>_palavra_</code></td><td>sublinhado</td></tr>
           <tr><td><code>[palavra]</code></td><td>caixa vermelha</td></tr>
           <tr><td><code>~palavra</code></td><td>solo com pop</td></tr>
+          <tr><td><code>{#FFD60A}palavra</code></td><td>cor da palavra</td></tr>
           <tr><td><code>|</code></td><td>quebra de cena</td></tr>
           <tr><td><code>"…"</code></td><td>card de citação</td></tr>
         </table>
@@ -154,11 +175,12 @@
         <h2>Estilo</h2>
         <button class="btn-link" id="btnResetStyle">Restaurar preset</button>
       </div>
+      <p class="hint">Tudo aqui vale para <b>este vídeo inteiro</b> e já aparece no preview. Vídeos exportados antes não mudam: renderize de novo na aba Exportar. Para mudar só algumas palavras, clique nelas no vídeo.</p>
       <div class="presets" id="presetGrid"></div>
       <div id="controls" class="controls"></div>
       <div class="save-preset">
         <h3 class="eyebrow">Salvar como novo preset</h3>
-        <input id="newPresetName" placeholder="nome-do-preset" spellcheck="false">
+        <input id="newPresetName" placeholder="Preset 7" spellcheck="false">
         <input id="newPresetDesc" placeholder="Descrição curta (opcional)">
         <button class="btn btn-primary btn-block" id="btnSavePreset">Salvar preset</button>
       </div>

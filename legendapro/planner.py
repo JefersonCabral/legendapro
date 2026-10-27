@@ -7,10 +7,11 @@ Modos de cena:
   card   fundo chapado com palavra em serifada fina (citações / listas)
 """
 import random
+import re
 import zlib
 
 from . import nlp_pt as L
-from .transcript import normalize
+from .transcript import normalize, word_color
 
 
 def _rng(words, salt=""):
@@ -67,6 +68,20 @@ def split_clauses(words, sent, gap=0.32, max_len=9):
 CONJ = set("e mas que porque se quando pra para onde aonde como entao ou".split())
 
 
+def split_forced(words, cl):
+    """Mais de uma palavra marcada como destaque na mesma oração: corta depois de cada uma,
+    para que todas virem destaque (o motor faz um destaque por trecho)."""
+    f = [k for k, i in enumerate(cl) if "emph" in words[i].flags]
+    if len(f) <= 1:
+        return [cl]
+    parts, start = [], 0
+    for k in f[:-1]:
+        parts.append(cl[start:k + 1])
+        start = k + 1
+    parts.append(cl[start:])
+    return [p for p in parts if p]
+
+
 def repeated_trigram(words, idx):
     seen = set()
     norms = [words[i].norm for i in idx]
@@ -87,15 +102,21 @@ class Planner:
         self.rules = preset["rules"]
         self.fx = preset["effects"]
         self.col = preset["colors"]
+        self._wid = {}
 
     # tokens ---------------------------------------------------------
     def tok(self, w, role="sans", scale=1.0, color=None, appear="blur", fx=None):
-        return {
+        uc = word_color(w)
+        t = {
             "text": w.text, "role": role,
             "size": round(self.lay["base_size"] * scale, 5),
-            "color": color or self.col["text"],
+            "color": uc or color or self.col["text"],
             "t_in": round(w.start, 3), "appear": appear, "fx": list(fx or []),
+            "wi": self._wid.get(id(w), -1),
         }
+        if uc:
+            t["user_color"] = True
+        return t
 
     def emphasis_index(self, words, idx):
         forced = [i for i in idx if "emph" in words[i].flags or "red" in words[i].flags]
@@ -131,7 +152,7 @@ class Planner:
         sc = {"mode": "chunk", "t_in": round(t0, 3), "exit": "cut",
               "lines": [{"tokens": toks, "dx": 0.0}], "decos": [], "words": grp}
         for j, i in enumerate(grp):
-            if "red" in words[i].flags:
+            if "red" in words[i].flags and not toks[j].get("user_color"):
                 toks[j]["color"] = self.col["red"]
             if "box" in words[i].flags:
                 toks[j]["fx"].append("box"); toks[j]["role"] = "sans_i"
@@ -290,7 +311,7 @@ class Planner:
         """Escolhe as ênfases do vídeo inteiro com orçamento e espaçamento mínimo."""
         rules = self.rules
         dur = max(words[-1].end - words[0].start, 1.0)
-        budget = max(1, int(dur / rules.get("emphasis_every", 4.5) + 0.5))
+        budget = max(1, int(dur / max(rules.get("emphasis_every", 4.5), 0.1) + 0.5))
         gap = rules.get("emphasis_gap", 2.5)
         cands = []
         for u, (si, ci, cl, card) in enumerate(units):
@@ -300,23 +321,306 @@ class Planner:
             if forced:
                 cands.append((99.0, u, forced[-1]))
                 continue
-            s, i = max((L.score(words, i), i) for i in cl)
+            if rules.get("emphasis_every", 4.5) <= 0:
+                continue
+            off = any("noemph" in words[i].flags for i in cl)
+            # destaque desligado à mão: o trecho continua ocupando a vaga dele (nada aparece
+            # em outro lugar no lugar dele), mas fica sem destaque
+            s, i = max((L.score(words, i, ignore_off=off), i) for i in cl)
+            if off:
+                i = None
             if u == 0 and s >= 1.5:
                 s = 98.0  # o gancho (primeira frase) sempre ganha ênfase
             if s >= rules["emphasis_threshold"]:
                 cands.append((s, u, i))
         cands.sort(reverse=True)
-        chosen, times = {}, []
+        chosen, times, used = {}, [], 0
         for s, u, i in cands:
-            t = words[i].start
-            if s < 99 and (len(chosen) >= budget or any(abs(t - x) < gap for x in times)):
+            t = words[i if i is not None else units[u][2][0]].start
+            if s < 99 and (used >= budget or any(abs(t - x) < gap for x in times)):
                 continue
-            chosen[u] = i
+            used += 1
             times.append(t)
+            if i is not None:
+                chosen[u] = i
         return chosen
+
+    # motor "frase" -------------------------------------------------
+    # Presets com rules.engine = "phrase": cada trecho vira um bloco curto (plain) ou uma
+    # palavra-herói grande com linhas de apoio pequenas acima/abaixo (hero).
+    def ptext(self, w):
+        t = w.text
+        r = self.rules
+        if r.get("strip_punct"):
+            t = re.sub(r"[%s]+$" % re.escape(r["strip_punct"]), "", t) or t
+        t = t.replace("’", "'")
+        case = r.get("case", "keep")
+        if case == "lower":
+            t = t.lower()
+        elif case == "upper":
+            t = t.upper()
+        return t
+
+    def ptok(self, w, kind):
+        """kind: plain | support | hero | serif (papel de fonte e de animação)."""
+        lay, col = self.lay, self.col
+        role = {"plain": "sans", "support": "sans", "italic": "italic", "hero": "hero", "serif": "serif"}[kind]
+        scale = {"plain": 1.0, "support": lay.get("support_scale", 1.0), "italic": lay.get("support_scale", 1.0),
+                 "hero": lay.get("hero_scale", 2.5), "serif": lay.get("serif_scale", 1.6)}[kind]
+        color = None
+        fx = []
+        if kind == "hero":
+            color = col["red"] if "red" in w.flags else col.get("hero", col["text"])
+            fx.append("glow")
+        elif "red" in w.flags:
+            color = col["red"]
+        # herói curto ("Paul", "Não") fica ainda maior, como nas referências
+        if kind == "hero" and lay.get("hero_short_scale") and len(w.norm) <= lay.get("hero_short_chars", 4):
+            scale *= lay["hero_short_scale"]
+        t = self.tok(w, role=role, scale=scale, color=color, fx=fx)
+        t["text"] = self.ptext(w)
+        t["anim"] = "support" if kind == "italic" else kind
+        return t
+
+    def plain_groups(self, words, idx):
+        """Blocos curtos na ordem da fala: junta até N palavras / M letras, sem atravessar
+        fim de oração e sem deixar um artigo colado antes da palavra forte."""
+        r = self.rules
+        mw, mc = r.get("chunk_max_words", 2), r.get("chunk_max_chars", 14)
+        out, cur = [], []
+        for k, i in enumerate(idx):
+            w = words[i]
+            if cur:
+                prev = words[cur[-1]]
+                chars = sum(len(words[j].text) + 1 for j in cur) + len(w.text)
+                lone_article = r.get("article_alone") and len(cur) == 1 and prev.norm in L.LEADERS \
+                    and L.score(words, i) >= r.get("emphasis_threshold", 2.4)
+                if len(cur) >= mw or chars > mc or L.ends_clause(prev.text) or lone_article \
+                        or w.start - prev.end > r.get("chunk_pause", 0.35) or "break" in prev.flags:
+                    out.append(cur); cur = []
+            cur.append(i)
+        if cur:
+            out.append(cur)
+        return out
+
+    def phrase_scene(self, words, mode, lines):
+        """lines: [(kind_da_linha, [(i, kind_do_token)])]"""
+        fx = self.fx
+        anim = fx.get("anim", {})
+        t0 = min(words[i].start for _, toks in lines for i, _ in toks) - fx.get("lead", 0.02)
+        out_lines, idx = [], []
+        for lk, toks in lines:
+            tl = []
+            for i, kind in toks:
+                t = self.ptok(words[i], kind)
+                # revelação palavra a palavra (no tempo da fala) ou o bloco inteiro de uma vez
+                # o papel de animação (t["anim"]) e não o tipo da linha: itálico anima como apoio
+                if anim.get(t["anim"], {}).get("reveal", "scene") == "word":
+                    t["t_in"] = round(max(t0, words[i].start - fx.get("lead", 0.02)), 3)
+                else:
+                    t["t_in"] = round(t0, 3)
+                tl.append(t)
+                idx.append(i)
+            if lk == "hero" and len(tl) > 1 and self.lay.get("hero_short_scale"):
+                total = sum(len(normalize(t["text"])) for t in tl)
+                size = self.lay["base_size"] * self.lay.get("hero_scale", 2.5)
+                if total <= self.lay.get("hero_short_chars", 4):
+                    size *= self.lay["hero_short_scale"]
+                for t in tl:
+                    t["size"] = round(size, 5)
+            out_lines.append({"tokens": tl, "kind": lk, "dx": 0.0})
+        sc = {"mode": mode, "t_in": round(t0, 3), "exit": fx.get("exit", {}).get("type", "cut"),
+              "lines": out_lines, "decos": [], "words": idx}
+        # elipse / sublinhado marcados à mão continuam valendo
+        for li, ln in enumerate(out_lines):
+            for tj, t in enumerate(ln["tokens"]):
+                w = words[t["wi"]]
+                if "circle" in w.flags:
+                    sc["decos"].append({"kind": "ellipse", "line": li, "token": tj,
+                                        "t": round(t["t_in"] + 0.1, 3), "color": self.col.get("accent", "#FFFFFF")})
+                if "underline" in w.flags:
+                    sc["decos"].append({"kind": "underline", "line": li, "token": None,
+                                        "t": round(t["t_in"] + 0.12, 3), "color": t["color"]})
+        return sc
+
+    def plan_phrase(self, words):
+        rules = self.rules
+        units = []
+        for si, sent in enumerate(split_sentences(words, gap=rules.get("sentence_gap", 0.7))):
+            parts = [p for cl in split_clauses(words, sent, max_len=rules.get("phrase_max_words", 7))
+                     for p in split_forced(words, cl)]
+            for ci, cl in enumerate(parts):
+                units.append((si, ci, cl, False))
+        emph = self.pick_emphasis(words, units)
+        ms, mc = rules.get("support_max_words", 3), rules.get("support_max_chars", 18)
+        scenes = []
+
+        def plain(idx):
+            for g in self.plain_groups(words, idx):
+                scenes.append(self.phrase_scene(words, "plain", [("plain", [(i, "plain") for i in g])]))
+
+        for u, (si, ci, cl, _) in enumerate(units):
+            e = emph.get(u)
+            if e is None:
+                plain(cl)
+                continue
+            k = cl.index(e)
+            hero = [e]
+            # número + unidade viram um herói só ("$40 trillion", "10 mil")
+            if rules.get("hero_number_unit", True) and k + 1 < len(cl) and re.search(r"\d", words[e].text) \
+                    and not L.ends_clause(words[e].text) and len(words[cl[k + 1]].text) <= 9:
+                hero.append(cl[k + 1])
+            before, after = cl[:k], cl[k + len(hero):]
+            above = before[-ms:]
+            while above and sum(len(words[j].text) + 1 for j in above) > mc:
+                above = above[1:]
+            head = before[:len(before) - len(above)]
+            below = after[:ms]
+            while below and sum(len(words[j].text) + 1 for j in below) > mc:
+                below = below[:-1]
+            tail = after[len(below):]
+            serif = []
+            # cauda serifada: nome próprio logo depois do herói ("Peak *Architects*")
+            if rules.get("serif_tail") and below and words[below[0]].text[:1].isupper():
+                serif, below = [below[0]], below[1:]
+            plain(head)
+            lines = []
+            if above:
+                lines.append(("above", [(i, "support") for i in above]))
+            lines.append(("hero", [(i, "hero") for i in hero]))
+            if serif:
+                lines.append(("serif", [(i, "serif") for i in serif]))
+            if below:
+                lines.append(("below", [(i, "support") for i in below]))
+            scenes.append(self.phrase_scene(words, "hero", lines))
+            plain(tail)
+
+        self.timing(scenes, words)
+        for sc in scenes:
+            sc.pop("words", None)
+        return {"preset": self.p["name"], "scenes": scenes, "flashes": []}
+
+    # blocos que acumulam (rules.layout_engine = "stack") ------------------------
+    # Cada frase vira um bloco de várias linhas que vai crescendo palavra a palavra:
+    # apoio (regular) → herói (bold) → continuação (itálico) → fecho (bold itálico).
+    def text_lines(self, words, idx, max_words, max_chars):
+        out, cur = [], []
+        for i in idx:
+            chars = sum(len(words[j].text) + 1 for j in cur) + len(words[i].text)
+            if cur and (len(cur) >= max_words or chars > max_chars):
+                out.append(cur); cur = []
+            cur.append(i)
+        if cur:
+            out.append(cur)
+        return out
+
+    def plan_blocks(self, words):
+        rules = self.rules
+        sw, sc_ = rules.get("support_max_words", 6), rules.get("support_max_chars", 32)
+        hw, hc = rules.get("hero_max_words", 3), rules.get("hero_max_chars", 14)
+        bw, bd = rules.get("block_max_words", 14), rules.get("block_max_dur", 5.0)
+        # unidades = orações; blocos = frases (cortadas por tamanho/duração)
+        units, blocks = [], []
+        for si, sent in enumerate(split_sentences(words, gap=rules.get("block_pause", 0.6))):
+            cur = []
+            for cl in split_clauses(words, sent, max_len=rules.get("phrase_max_words", 9)):
+                for part in split_forced(words, cl):
+                    n = sum(len(u) for u in cur)
+                    if cur and (n + len(part) > bw or words[part[-1]].end - words[cur[0][0]].start > bd):
+                        blocks.append(cur); cur = []
+                    cur.append(part)
+                    units.append((si, len(units), part, False))
+            if cur:
+                blocks.append(cur)
+        emph = self.pick_emphasis(words, units)
+        heroes = set(emph.values())
+        # quase todo bloco tem uma palavra forte (como na referência): se o orçamento não deu
+        # nenhuma, usa a de maior pontuação do bloco (a menos que o destaque tenha sido desligado)
+        for block in blocks:
+            idx = [i for part in block for i in part]
+            if not heroes.intersection(idx) and not any("noemph" in words[i].flags for i in idx):
+                best, i = max((L.score(words, i), i) for i in idx)
+                if best >= rules.get("block_hero_min", 1.5):
+                    heroes.add(i)
+
+        scenes = []
+        for bi, block in enumerate(blocks):
+            idx = [i for part in block for i in part]
+            # papel de cada palavra: antes do 1º herói = apoio; herói (+ número/unidade, nome
+            # composto); depois = continuação em itálico. Palavras seguidas do mesmo papel formam
+            # linhas contínuas (as pausas da fala não quebram linha).
+            role, k = [], 0
+            seen_hero = False
+            while k < len(idx):
+                i = idx[k]
+                if i in heroes:
+                    grp = [i]
+                    # número antes do herói entra junto ("30 seconds", "6 Person Team")
+                    if role and role[-1][0] != "hero" and re.search(r"\d", words[role[-1][1]].text) \
+                            and not L.ends_clause(words[role[-1][1]].text):
+                        grp.insert(0, role.pop()[1])
+                    for j in idx[k + 1:]:
+                        w, prev = words[j], words[grp[-1]]
+                        joined = sum(len(words[x].text) + 1 for x in grp) + len(w.text)
+                        if len(grp) >= hw or joined > hc or L.ends_clause(prev.text):
+                            break
+                        if re.search(r"\d", words[grp[0]].text) or (w.text[:1].isupper() and words[i].text[:1].isupper()):
+                            grp.append(j)
+                        else:
+                            break
+                    role += [("hero", j) for j in grp]
+                    k = idx.index(grp[-1]) + 1
+                    seen_hero = True
+                    role.append(("cut", None))   # cada herói é uma linha própria
+                    continue
+                role.append(("italic" if seen_hero else "support", i))
+                k += 1
+            lines, run, kind = [], [], None
+            for kd, i in role + [("cut", None)]:
+                if kd != kind or kd == "cut":
+                    if run:
+                        lines += [(kind, [run[0]] + run[1:])] if kind == "hero" else \
+                            [(kind, ln) for ln in self.text_lines(words, run, sw, sc_)]
+                    run, kind = [], kd
+                if i is not None:
+                    run.append(i)
+            # fecho da frase com palavra forte: bold itálico
+            if lines and lines[-1][0] == "italic" and L.ends_sentence(words[lines[-1][1][-1]].text) \
+                    and max(L.score(words, i) for i in lines[-1][1]) >= rules.get("emphasis_threshold", 2.4):
+                lines[-1] = ("hero_italic", lines[-1][1])
+            # blocos com linhas demais viram dois
+            ml = rules.get("max_lines", 4)
+            for g in range(0, len(lines), ml):
+                scenes.append(self.block_scene(words, lines[g:g + ml], bi == 0))
+        self.timing(scenes, words)
+        for sc in scenes:
+            sc.pop("words", None)
+        return {"preset": self.p["name"], "scenes": scenes, "flashes": []}
+
+    def block_scene(self, words, lines, hook):
+        kinds = {"support": "support", "italic": "italic", "hero": "hero", "hero_italic": "serif"}
+        spec = [(lk, [(i, kinds[lk]) for i in idx]) for lk, idx in lines]
+        sc = self.phrase_scene(words, "block", spec)
+        for ln in sc["lines"]:
+            n = len(ln["tokens"])
+            for t in ln["tokens"]:
+                t["line_n"] = n            # direção automática da entrada (linha longa vem da direita)
+            # caixa: marcada à mão ([texto]) ou fecho do gancho com número ("in 30 seconds")
+            if any("box" in words[t["wi"]].flags for t in ln["tokens"]):
+                ln["box"] = True
+        last = sc["lines"][-1]
+        if hook and self.rules.get("box_hook") and len(sc["lines"]) >= 3 \
+                and any(re.search(r"\d", t["text"]) for t in last["tokens"]):
+            last["box"] = True
+        return sc
 
     def plan(self, words):
         rules = self.rules
+        self._wid = {id(w): i for i, w in enumerate(words)}
+        if rules.get("engine") == "phrase" and rules.get("layout_engine") == "stack":
+            return self.plan_blocks(words)
+        if rules.get("engine") == "phrase":
+            return self.plan_phrase(words)
         scenes = []
         sents = split_sentences(words)
         last_mode = None
@@ -334,7 +638,9 @@ class Planner:
             if is_card and rules["cards"]["enabled"]:
                 units.append((si, 0, sent, True))
                 continue
-            for ci, cl in enumerate(split_clauses(words, sent, max_len=rules["stack_max_words"] + 1)):
+            parts = [p for cl in split_clauses(words, sent, max_len=rules["stack_max_words"] + 1)
+                     for p in split_forced(words, cl)]
+            for ci, cl in enumerate(parts):
                 units.append((si, ci, cl, False))
         emph = self.pick_emphasis(words, units)
 
@@ -450,6 +756,16 @@ class Planner:
                     t_out = min(nxt - 0.06, natural)
                 elif nxt - last_end >= bo["duration"] + 0.05:
                     t_out = min(natural, nxt - bo["duration"])
+                else:
+                    t_out = nxt
+                    sc["exit"] = "cut"
+            elif sc["exit"] == "fade":
+                # fade que termina exatamente quando o próximo bloco começa; sem tempo, corte seco
+                d = self.fx.get("exit", {}).get("duration", 0.25)
+                if nxt is None:
+                    t_out = last_end + hold
+                elif nxt - last_end >= d + 0.05:
+                    t_out = min(nxt - d, last_end + hold)
                 else:
                     t_out = nxt
                     sc["exit"] = "cut"

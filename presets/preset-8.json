@@ -1,0 +1,165 @@
+{
+  "name": "preset-8",
+  "title": "Preset 8",
+  "description": "Referência v7 fiel: igual ao Preset 7, com texto escuro (#242424) para fundos claros e caixa escura com texto branco.",
+  "fonts": {
+    "sans": {
+      "file": "Inter-VF.ttf",
+      "axes": {
+        "opsz": 32,
+        "wght": 400
+      },
+      "tracking": -0.024
+    },
+    "italic": {
+      "file": "Inter-Italic-VF.ttf",
+      "axes": {
+        "opsz": 32,
+        "wght": 550
+      },
+      "tracking": -0.02
+    },
+    "hero": {
+      "file": "Inter-VF.ttf",
+      "axes": {
+        "opsz": 32,
+        "wght": 740
+      },
+      "tracking": -0.02
+    },
+    "serif": {
+      "file": "Inter-Italic-VF.ttf",
+      "axes": {
+        "opsz": 32,
+        "wght": 700
+      },
+      "tracking": -0.012
+    }
+  },
+  "layout": {
+    "anchor_mode": "top",
+    "anchor_y": 0.44,
+    "max_bottom": 0.88,
+    "safe_width": 0.8,
+    "base_size": 0.065,
+    "support_scale": 1.0,
+    "hero_scale": 1.82,
+    "hero_short_scale": 1.4,
+    "hero_short_chars": 6,
+    "hero_max_width": 0.78,
+    "serif_scale": 1.65,
+    "gap_above": 0.028,
+    "gap_below": 0.025,
+    "gap_lines": 0.02,
+    "hero_line_gap": 0.96,
+    "box_gap": 0.03
+  },
+  "colors": {
+    "text": "#242424",
+    "hero": "#242424",
+    "red": "#E3241D",
+    "accent": "#242424",
+    "box": {
+      "fill": "#242424",
+      "text": "#F5F5F5",
+      "radius": 0.014,
+      "pad_x": 0.022,
+      "pad_y": 0.024,
+      "shadow": 0.35
+    }
+  },
+  "effects": {
+    "shadow": {
+      "opacity": 0.0,
+      "blur": 0.005,
+      "offset_y": 0.0
+    },
+    "gradient": {
+      "enabled": false,
+      "top": 0.45,
+      "full": 0.95,
+      "opacity": 0.75,
+      "curve": 1.0,
+      "color": "#000000"
+    },
+    "glow": {},
+    "anim": {
+      "plain": {
+        "type": "rise",
+        "reveal": "word",
+        "duration": 0.95,
+        "ease": "out_quart",
+        "fade_with_motion": true,
+        "opacity_from": 0.28,
+        "dist": 0.113,
+        "from": "auto_line",
+        "right_if_words": 4
+      },
+      "support": {
+        "type": "rise",
+        "reveal": "word",
+        "duration": 0.95,
+        "ease": "out_quart",
+        "fade_with_motion": true,
+        "opacity_from": 0.28,
+        "dist": 0.113,
+        "from": "auto_line",
+        "right_if_words": 4
+      },
+      "hero": {
+        "type": "rise",
+        "reveal": "word",
+        "duration": 0.95,
+        "ease": "out_quart",
+        "fade_with_motion": true,
+        "opacity_from": 0.28,
+        "dist": 0.113,
+        "from": "below"
+      },
+      "serif": {
+        "type": "rise",
+        "reveal": "word",
+        "duration": 0.95,
+        "ease": "out_quart",
+        "fade_with_motion": true,
+        "opacity_from": 0.28,
+        "dist": 0.113,
+        "from": "below"
+      }
+    },
+    "box_wipe": {
+      "duration": 0.83
+    },
+    "exit": {
+      "type": "fade",
+      "duration": 0.25
+    },
+    "lead": 0.1
+  },
+  "rules": {
+    "engine": "phrase",
+    "emphasis_threshold": 2.4,
+    "emphasis_every": 2.0,
+    "emphasis_gap": 1.2,
+    "phrase_max_words": 9,
+    "support_max_words": 6,
+    "support_max_chars": 32,
+    "chunk_max_words": 3,
+    "chunk_max_chars": 16,
+    "chunk_pause": 0.35,
+    "max_hold": 3.0,
+    "case": "keep",
+    "strip_punct": ",;:",
+    "hero_number_unit": true,
+    "serif_tail": false,
+    "article_alone": false,
+    "layout_engine": "stack",
+    "hero_max_words": 3,
+    "hero_max_chars": 14,
+    "block_max_words": 16,
+    "block_max_dur": 7.0,
+    "block_pause": 0.9,
+    "max_lines": 4,
+    "box_hook": true
+  }
+}

@@ -5,7 +5,7 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 
 const S = {
-  status: null, presets: [], fonts: [], projects: [],
+  status: null, presets: [], fonts: [], projects: [], builtin: [],
   cur: null,          // projeto aberto (dados do servidor)
   base: null,         // preset base (json)
   overrides: {},
@@ -14,6 +14,11 @@ const S = {
   previewKey: null,
   previewUrl: null,
   jobs: {},           // id -> job
+  sel: [],            // palavras selecionadas no preview (índices de plan.words)
+  anchor: null,       // início da seleção com shift
+  hits: [],           // caixas das palavras visíveis no quadro atual
+  dirty: false,       // texto editado e ainda não salvo
+  undo: [],           // versões anteriores do texto (Ctrl+Z)
 };
 
 /* ------------------------------------------------------------ utilidades */
@@ -62,8 +67,16 @@ const toast = (msg, err = false) => {
 const pct = v => `${Math.round(v * 100)}%`;
 const CONTROLS = [
   { g: "Posição e tamanho", open: true, items: [
+    { p: "layout.offset_x", l: "Mover para os lados", t: "range", min: -.3, max: .3, step: .005, def: 0, always: true,
+      f: v => Math.abs(v) < .001 ? "centro" : v < 0 ? `← ${Math.round(-v * 100)}% esquerda` : `direita ${Math.round(v * 100)}% →` },
+    { p: "layout.offset_y", l: "Mover para cima / baixo", t: "range", min: -.3, max: .3, step: .005, def: 0, always: true,
+      f: v => Math.abs(v) < .001 ? "posição do estilo" : v < 0 ? `↑ ${Math.round(-v * 100)}% acima` : `↓ ${Math.round(v * 100)}% abaixo` },
+    { p: "_offset_reset", t: "button", l: "Voltar a legenda para a posição do estilo", always: true,
+      hint: "Ou arraste a legenda direto no vídeo: clique numa palavra e arraste. Vale para todas as legendas.",
+      act: () => { setOverride("layout.offset_x", 0); setOverride("layout.offset_y", 0); syncControls(); } },
     { p: "layout.anchor_y", l: "Altura na tela", t: "range", min: .25, max: .88, step: .005, f: pct },
     { p: "layout.base_size", l: "Tamanho do texto", t: "range", min: .045, max: .11, step: .001, f: v => `${(v * 100).toFixed(1)}% da largura` },
+    { p: "layout.hero_scale", l: "Tamanho do destaque", t: "range", min: 1, max: 4, step: .05, f: v => `${v.toFixed(2)}×` },
     { p: "layout.serif_scale", l: "Tamanho da ênfase", t: "range", min: 1, max: 2.6, step: .05, f: v => `${v.toFixed(2)}×` },
     { p: "layout.solo_scale", l: "Palavra solo", t: "range", min: 1, max: 2.2, step: .05, f: v => `${v.toFixed(2)}×` },
     { p: "layout.small_scale", l: "Palavras de apoio (a sua, o seu)", t: "range", min: .55, max: 1, step: .01, f: v => `${v.toFixed(2)}×` },
@@ -73,8 +86,16 @@ const CONTROLS = [
   ]},
   { g: "Cores", items: [
     { p: "colors.text", l: "Texto", t: "color" },
+    { p: "colors.hero", l: "Palavra de destaque", t: "color" },
     { p: "colors.red", l: "Destaque vermelho", t: "color" },
     { p: "colors.accent", l: "Elipse", t: "color" },
+  ]},
+  { g: "Gradiente atrás da legenda", items: [
+    { p: "effects.gradient.enabled", l: "Escurecer a parte de baixo do vídeo", t: "switch", always: true },
+    { p: "effects.gradient.opacity", l: "Intensidade", t: "range", min: .1, max: 1, step: .01, f: pct },
+    { p: "effects.gradient.top", l: "Começa em (altura)", t: "range", min: .2, max: .9, step: .01, f: pct },
+    { p: "effects.gradient.full", l: "Escuro total em (altura)", t: "range", min: .4, max: 1, step: .01, f: pct },
+    { p: "effects.gradient.color", l: "Cor", t: "color" },
   ]},
   { g: "Fontes", items: [
     { p: "fonts.sans.file", l: "Sans (texto corrido)", t: "font" },
@@ -88,6 +109,7 @@ const CONTROLS = [
     { p: "effects.blur_in.max_blur", l: "Intensidade do blur", t: "range", min: 0, max: .04, step: .001, f: v => (v * 1000).toFixed(0) },
     { p: "effects.pop.scale_from", l: "Força do pop", t: "range", min: 1, max: 1.4, step: .01, f: v => `${v.toFixed(2)}×` },
     { p: "effects.drift", l: "Deriva lenta", t: "range", min: 0, max: .02, step: .001, f: v => (v * 1000).toFixed(0) },
+    { p: "effects.rays.enabled", l: "Raios de luz no destaque", t: "switch" },
     { p: "effects.flicker", l: "Vermelho piscando", t: "switch" },
     { p: "effects.red_glow", l: "Brilho no vermelho", t: "switch" },
     { p: "effects.flash.enabled", l: "Flash de luz entre blocos", t: "switch" },
@@ -123,6 +145,11 @@ function buildControls() {
           <input type="range" min="${c.min}" max="${c.max}" step="${c.step}">`;
         const inp = $("input", w);
         inp.addEventListener("input", () => { paintRange(inp); $("output", w).textContent = c.f(+inp.value); setOverride(c.p, +inp.value); });
+        // duplo clique volta ao valor padrão do controle
+        if (c.def !== undefined) inp.addEventListener("dblclick", () => { setOverride(c.p, c.def); syncControls(); });
+      } else if (c.t === "button") {
+        w.innerHTML = `<button class="btn btn-sm btn-block">${c.l}</button>${c.hint ? `<p class="hint">${c.hint}</p>` : ""}`;
+        $("button", w).addEventListener("click", c.act);
       } else if (c.t === "switch") {
         w.innerHTML = `<label class="switch"><span>${c.l}</span><input type="checkbox"></label>`;
         $("input", w).addEventListener("change", e => setOverride(c.p, e.target.checked));
@@ -150,8 +177,9 @@ function syncControls() {
   for (const w of $$("#controls .ctl")) {
     const c = w._c; const v = getPath(st, c.p);
     w.classList.toggle("changed", getPath(S.overrides, c.p) !== undefined);
-    w.style.display = v === undefined && c.t !== "switch" ? "none" : "";
-    if (c.t === "range") { const i = $("input", w); i.value = v ?? c.min; paintRange(i); $("output", w).textContent = c.f(+i.value); }
+    w.style.display = v === undefined && !c.always ? "none" : "";
+    if (c.t === "button") continue;
+    if (c.t === "range") { const i = $("input", w); i.value = v ?? c.def ?? c.min; paintRange(i); $("output", w).textContent = c.f(+i.value); }
     else if (c.t === "switch") $("input", w).checked = !!v;
     else if (c.t === "color") { $("input", w).value = (v || "#ffffff").toLowerCase(); $("code", w).textContent = (v || "").toUpperCase(); }
     else $("select", w).value = String(v);
@@ -166,8 +194,9 @@ const pushOverrides = debounce(async () => {
   } catch (e) { toast(e.message, true); }
 }, 300);
 
+const ctlDefault = p => CONTROLS.flatMap(g => g.items).find(c => c.p === p)?.def;
 function setOverride(p, v) {
-  if (getPath(S.base, p) === v) delPath(S.overrides, p); else setPath(S.overrides, p, v);
+  if ((getPath(S.base, p) ?? ctlDefault(p)) === v) delPath(S.overrides, p); else setPath(S.overrides, p, v);
   const w = $(`#controls .ctl[data-p="${p}"]`); if (w) w.classList.toggle("changed", getPath(S.overrides, p) !== undefined);
   pushOverrides();
 }
@@ -180,19 +209,19 @@ function renderPresets() {
     const b = document.createElement("button"); b.className = "preset" + (p.name === curName ? " active" : "");
     b.title = p.description || p.name;
     b.innerHTML = `<img loading="lazy" alt="" src="/api/presets/${encodeURIComponent(p.name)}/thumb.jpg?v=${p._v || 0}">
-      <span class="preset-name">${p.name}</span>
-      ${["galho", "desculpa"].includes(p.name) ? "" : `<span class="preset-del" title="Apagar preset">×</span>`}`;
+      <span class="preset-name">${escapeHtml(p.title || p.name)}</span>
+      ${S.builtin.includes(p.name) ? "" : `<span class="preset-del" title="Apagar preset">×</span>`}`;
     b.addEventListener("click", async e => {
       if (e.target.classList.contains("preset-del")) {
         e.stopPropagation();
-        if (!confirm(`Apagar o preset “${p.name}”?`)) return;
+        if (!confirm(`Apagar o preset “${p.title || p.name}”?`)) return;
         await api(`/api/presets/${p.name}`, { method: "DELETE" }); await loadPresets(); return;
       }
       if (!S.cur) return;
       await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { preset: p.name } });
       S.cur.preset = p.name; S.base = p; S.overrides = {};
-      renderPresets(); syncControls(); await refreshPlan();
-      toast(`Estilo “${p.name}” aplicado`);
+      renderPresets(); syncControls(); loadProjects(); await refreshPlan();
+      toast(`Estilo “${p.title || p.name}” aplicado`);
     });
     grid.appendChild(b);
   }
@@ -204,8 +233,9 @@ function renderPresets() {
 
 async function loadPresets() {
   const r = await api("/api/presets");
-  S.presets = r.presets.map(p => ({ ...p, _v: Date.now() })); S.fonts = r.fonts;
-  const opts = S.presets.map(p => `<option value="${p.name}">${p.name}</option>`).join("");
+  S.presets = r.presets.map(p => ({ ...p, _v: Date.now() })); S.fonts = r.fonts; S.builtin = r.builtin || [];
+  $("#newPresetName").placeholder = r.next_title || "Preset novo";
+  const opts = S.presets.map(p => `<option value="${p.name}">${escapeHtml(p.title || p.name)}</option>`).join("");
   $("#uploadPreset").innerHTML = opts;
   if (S.cur) S.base = S.presets.find(p => p.name === S.cur.preset) || S.base;
   buildControls(); syncControls(); renderPresets();
@@ -219,7 +249,7 @@ async function loadProjects() {
     const el = document.createElement("div"); el.className = "proj" + (S.cur?.id === p.id ? " active" : ""); el.tabIndex = 0;
     const st = { novo: "na fila", transcrito: "pronto" }[p.status] || p.status;
     el.innerHTML = `<img src="/api/projects/${p.id}/thumb.jpg" alt="">
-      <div><div class="proj-name"></div><div class="proj-meta">${fmtTime(p.duration).slice(0, 5)} · ${p.width}×${p.height}<br>${p.preset} · ${st}</div></div>
+      <div><div class="proj-name"></div><div class="proj-meta">${fmtTime(p.duration).slice(0, 5)} · ${p.width}×${p.height}<br>${escapeHtml(S.presets.find(x => x.name === p.preset)?.title || p.preset)} · ${st}</div></div>
       <button class="proj-del" title="Apagar projeto">×</button>`;
     $(".proj-name", el).textContent = p.name;
     el.addEventListener("click", e => {
@@ -238,7 +268,8 @@ async function deleteProject(p) {
 }
 
 function closeProject() {
-  S.cur = null; S.plan = null; S.previewKey = null;
+  S.cur = null; S.plan = null; S.previewKey = null; previewJob = null; wantPlay = false;
+  clearSel(); S.hits = []; drawHits();
   $("#viewer").hidden = true; $("#drop").hidden = false; $("#projectTitleWrap").hidden = true;
   $("#inspector").classList.add("disabled");
   $("#player").pause(); $("#player").removeAttribute("src");
@@ -247,7 +278,10 @@ function closeProject() {
 
 async function openProject(id) {
   const p = await api(`/api/projects/${id}`);
-  S.cur = p; S.t = 0; S.plan = null; S.previewKey = null;
+  S.cur = p; S.t = 0; S.plan = null; previewJob = null; wantPlay = false;
+  S.previewKey = p.preview?.key || null;
+  S.previewUrl = p.preview ? `/files/${p.id}/${p.preview.file}` : null;
+  S.undo = []; S.dirty = false; S.hits = []; clearSel();
   S.base = S.presets.find(x => x.name === p.preset) || S.presets[0];
   S.overrides = p.overrides || {};
   try { localStorage.setItem("lp.last", id); } catch {}
@@ -261,7 +295,6 @@ async function openProject(id) {
   renderPresets(); syncControls(); renderExports(); loadProjects();
   if (p.job && p.job.status === "running") watchJob(p.job);
   if (p.has_words) await refreshPlan(); else { $("#tlTrack").innerHTML = ""; requestFrame(); }
-  if (p.has_preview) { S.previewUrl = `/files/${p.id}/preview.mp4?v=${Date.now()}`; }
   updatePreviewState();
 }
 
@@ -328,17 +361,7 @@ async function onJob(j) {
       await openProject(S.cur.id);
     } else if (j.status === "error") { hideBusy(); toast(`Erro na transcrição: ${j.error}`, true); }
   } else if (j.kind === "preview") {
-    if (!mine) return;
-    const btn = $("#btnPlay");
-    if (j.status === "running") { btn.classList.add("loading"); $("#previewState").textContent = `gerando prévia ${Math.round(j.progress * 100)}%`; }
-    else {
-      btn.classList.remove("loading");
-      if (j.status === "done") {
-        S.previewKey = j._key; S.previewUrl = j.result.url; updatePreviewState();
-        if (j._autoplay) playPreview();
-      } else if (j.status === "error") toast(j.error, true);
-      updatePreviewState();
-    }
+    return; // acompanhado por pollPreview
   } else {
     if (!mine) return;
     $("#expProg").hidden = j.status !== "running";
@@ -359,7 +382,9 @@ async function refreshPlan() {
   if (!S.cur) return;
   try { S.plan = await api(`/api/projects/${S.cur.id}/plan`); }
   catch (e) { toast(e.message, true); return; }
-  drawTimeline(); requestFrame(); updatePreviewState();
+  S.sel = S.sel.filter(i => i < S.plan.words.length);
+  drawTimeline(); requestFrame(); updatePreviewState(); renderPop();
+  if (S.plan.key !== S.previewKey) autoPreview();
 }
 
 function drawTimeline() {
@@ -368,7 +393,7 @@ function drawTimeline() {
   const D = S.cur.duration;
   for (const sc of S.plan.scenes) {
     const el = document.createElement("div");
-    el.className = `tl-scene ${sc.mode}` + (sc.mode === "stack" && !/\S/.test(sc.text) ? "" : "");
+    el.className = `tl-scene ${sc.mode}`;
     el.style.left = `${(sc.t_in / D) * 100}%`;
     el.style.width = `calc(${(Math.max(0.05, sc.t_out - sc.t_in) / D) * 100}% - 1px)`;
     el.title = `${sc.mode.toUpperCase()} · ${sc.text}`;
@@ -386,7 +411,7 @@ function updateHead() {
   $("#tlHead").style.left = `calc(${f * 100}% - 1px)`;
   $("#scrub").value = f;
   $("#tcNow").textContent = fmtTime(S.t);
-  const names = { chunk: "chunk", stack: "pilha", solo: "solo", card: "card" };
+  const names = { chunk: "chunk", stack: "pilha", solo: "solo", card: "card", plain: "bloco", hero: "destaque", block: "frase empilhada" };
   let now = null;
   for (const sc of S.plan?.scenes || []) {
     const on = S.t >= sc.t_in && S.t < sc.t_out;
@@ -408,9 +433,20 @@ function requestFrame() {
     frameBusy = false; $("#frameLoading").classList.remove("on");
     if (framePending) { framePending = false; requestFrame(); }
   };
-  img.onload = () => { $("#frame").src = img.src; done(); };
+  const t = S.t;
+  img.onload = () => { $("#frame").src = img.src; done(); fetchHits(t); };
   img.onerror = done;
-  img.src = `/api/projects/${S.cur.id}/frame.jpg?t=${S.t.toFixed(3)}&k=${S.plan?.key || "0"}&h=1280`;
+  img.src = `/api/projects/${S.cur.id}/frame.jpg?t=${t.toFixed(3)}&k=${S.plan?.key || "0"}&h=1280`;
+}
+
+async function fetchHits(t) {
+  if (!S.cur?.has_words || !S.plan) { S.hits = []; return drawHits(); }
+  try {
+    const r = await api(`/api/projects/${S.cur.id}/hits?t=${t.toFixed(3)}`);
+    if (Math.abs(t - S.t) > 1e-4) return; // já mudou de quadro
+    S.hits = r.hits;
+  } catch { S.hits = []; }
+  drawHits();
 }
 
 function seek(t) {
@@ -424,19 +460,65 @@ $("#scrub").addEventListener("input", e => seek(+e.target.value * S.cur.duration
 $("#btnPrev").addEventListener("click", () => seek(S.t - 1 / (S.cur?.fps || 30)));
 $("#btnNext").addEventListener("click", () => seek(S.t + 1 / (S.cur?.fps || 30)));
 
-/* ------------------------------------------------------------ prévia em movimento */
+/* ------------------------------------------------------------ prévia em movimento
+   A prévia se refaz sozinha (em baixa resolução) pouco depois de cada alteração; o quadro
+   parado já mostra a mudança na hora. */
+let previewJob = null;   // {id, key, progress} da prévia sendo gerada
+let wantPlay = false;    // tocar assim que a prévia ficar pronta
+let swapping = false;    // trocando o arquivo do player sem parar a reprodução
+const previewFresh = () => !!(S.previewKey && S.plan && S.previewKey === S.plan.key && S.previewUrl);
+
 function updatePreviewState() {
   const el = $("#previewState");
+  $("#btnPlay").classList.toggle("loading", !!previewJob && wantPlay);
+  el.classList.remove("stale", "busy");
   if (!S.cur?.has_words) { el.textContent = ""; return; }
-  if (S.previewKey && S.plan && S.previewKey === S.plan.key) { el.textContent = "prévia em dia"; el.classList.remove("stale"); }
-  else if (S.previewUrl) { el.textContent = "prévia desatualizada · ▶ gera de novo"; el.classList.add("stale"); }
-  else { el.textContent = "▶ gera a prévia em movimento"; el.classList.remove("stale"); }
+  if (previewFresh()) el.textContent = "prévia em dia";
+  else if (previewJob) { el.textContent = `atualizando prévia ${Math.round((previewJob.progress || 0) * 100)}%`; el.classList.add("busy"); }
+  else { el.textContent = "prévia vai se atualizar…"; el.classList.add("stale"); }
 }
-function showStill() { $("#player").hidden = true; $("#frame").hidden = false; $("#btnPlay").classList.remove("playing"); requestFrame(); }
+
+async function startPreview() {
+  if (!S.cur?.has_words || !S.plan || previewFresh()) return;
+  if (previewJob && previewJob.key === S.plan.key) return;
+  const pid = S.cur.id, key = S.plan.key;
+  let j;
+  try { j = await api(`/api/projects/${pid}/render`, { method: "POST", body: { kind: "preview" } }); }
+  catch (e) { toast(e.message, true); return; }
+  if (S.cur?.id !== pid) return;
+  previewJob = { id: j.id, key, progress: 0 };
+  updatePreviewState();
+  const tick = async () => {
+    if (previewJob?.id !== j.id) return; // substituída por uma mais nova
+    let n; try { n = await api(`/api/jobs/${j.id}`); } catch { return; }
+    if (previewJob?.id !== j.id) return;
+    if (n.status === "running") { previewJob.progress = n.progress; updatePreviewState(); setTimeout(tick, 350); return; }
+    previewJob = null;
+    if (n.status === "done") {
+      S.previewKey = n.result.key; S.previewUrl = n.result.url;
+      swapPlaying();
+      if (wantPlay) { wantPlay = false; playPreview(); }
+      if (!previewFresh()) autoPreview(); // mudou de novo enquanto renderizava
+    } else if (n.status === "error") { wantPlay = false; toast(`Erro na prévia: ${n.error}`, true); }
+    updatePreviewState();
+  };
+  setTimeout(tick, 250);
+}
+const autoPreview = debounce(startPreview, 1200);
+
+function swapPlaying() {
+  // se a prévia antiga estiver tocando, troca pela nova no mesmo ponto
+  const pl = $("#player");
+  if (pl.hidden || pl.paused) return;
+  const t = pl.currentTime;
+  swapping = true; pl.src = S.previewUrl;
+  pl.addEventListener("loadedmetadata", () => { pl.currentTime = t; pl.play().finally(() => { swapping = false; }); }, { once: true });
+}
+function showStill() { $("#player").hidden = true; $("#frame").hidden = false; $("#hits").hidden = false; $("#btnPlay").classList.remove("playing"); requestFrame(); }
 async function playPreview() {
   const pl = $("#player");
   if (pl.getAttribute("src") !== S.previewUrl) pl.src = S.previewUrl;
-  pl.hidden = false; $("#frame").hidden = true;
+  pl.hidden = false; $("#frame").hidden = true; $("#hits").hidden = true; $("#wordPop").hidden = true;
   const start = S.t >= S.cur.duration - 0.1 ? 0 : S.t;
   const go = () => { pl.currentTime = start; pl.play(); $("#btnPlay").classList.add("playing"); };
   if (pl.readyState >= 1) go(); else pl.addEventListener("loadedmetadata", go, { once: true });
@@ -445,30 +527,26 @@ async function togglePlay() {
   if (!S.cur?.has_words) return;
   const pl = $("#player");
   if (!pl.hidden && !pl.paused) { pl.pause(); return; }
-  if (S.previewKey && S.plan && S.previewKey === S.plan.key && S.previewUrl) return playPreview();
-  const key = S.plan?.key;
-  const j = await api(`/api/projects/${S.cur.id}/render`, { method: "POST", body: { kind: "preview" } });
-  j._key = key; j._autoplay = true;
-  watchJobWith(j, key);
-}
-function watchJobWith(j, key) {
-  S.jobs[j.id] = j;
-  const tick = async () => {
-    let n; try { n = await api(`/api/jobs/${j.id}`); } catch { return; }
-    n._key = key; n._autoplay = true; onJob(n);
-    if (n.status === "running") setTimeout(tick, 350);
-  };
-  onJob(j); setTimeout(tick, 250);
+  if (wantPlay) { wantPlay = false; updatePreviewState(); return; }
+  if (S.dirty) await saveNow();
+  if (previewFresh()) return playPreview();
+  wantPlay = true; startPreview(); updatePreviewState();
 }
 $("#btnPlay").addEventListener("click", togglePlay);
 $("#player").addEventListener("timeupdate", e => { S.t = e.target.currentTime; updateHead(); });
-$("#player").addEventListener("pause", () => { $("#btnPlay").classList.remove("playing"); });
+$("#player").addEventListener("pause", e => {
+  if (swapping || e.target.hidden) return;
+  // pausou: volta para o quadro parado, onde dá para clicar nas palavras
+  S.t = e.target.currentTime; showStill(); updateHead(); renderPop();
+});
 $("#player").addEventListener("ended", () => { S.t = 0; showStill(); updateHead(); });
 $("#player").addEventListener("click", () => $("#player").pause());
 
 window.addEventListener("keydown", e => {
   if (["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement?.tagName)) return;
   if (!S.cur) return;
+  if (e.code === "Escape") { clearSel(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.code === "KeyZ") { e.preventDefault(); undoText(); return; }
   if (e.code === "Space") { e.preventDefault(); togglePlay(); }
   if (e.code === "ArrowLeft") { e.preventDefault(); seek(S.t - (e.shiftKey ? 1 : 1 / (S.cur.fps || 30))); }
   if (e.code === "ArrowRight") { e.preventDefault(); seek(S.t + (e.shiftKey ? 1 : 1 / (S.cur.fps || 30))); }
@@ -476,44 +554,357 @@ window.addEventListener("keydown", e => {
 
 /* ------------------------------------------------------------ texto */
 const setSave = (txt, cls = "") => { const el = $("#saveState"); el.textContent = txt; el.className = "save-state " + cls; };
-const saveText = debounce(async () => {
-  if (!S.cur) return;
-  try {
-    await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { text: $("#text").value } });
-    setSave("salvo", "ok"); await refreshPlan();
-  } catch (e) { setSave("erro ao salvar", "dirty"); toast(e.message, true); }
-}, 650);
-$("#text").addEventListener("input", () => { setSave("editando…", "dirty"); saveText(); });
-
-const WRAP = {
-  emph: ["*", "*"], red: ["!", "!"], circle: ["((", "))"], underline: ["_", "_"], box: ["[", "]"], solo: ["~", ""],
-};
-function wrapWord(w, mark) {
-  const m = w.match(/^(.*?)([.,!?;:…]*)$/); let core = m[1]; const tail = m[2];
-  if (!core) return w;
-  const [a, b] = WRAP[mark];
-  if (core.startsWith(a) && core.endsWith(b) && core.length > a.length + b.length - 1) return core.slice(a.length, core.length - b.length || undefined) + tail;
-  return a + core + b + tail;
+let saveTimer = null;
+function queueSave(ms = 650) {
+  S.dirty = true; setSave("editando…", "dirty");
+  clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, ms);
 }
+async function saveNow() {
+  clearTimeout(saveTimer);
+  if (!S.cur) return;
+  const v = $("#text").value;
+  try {
+    await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { text: v } });
+    if ($("#text").value === v) { S.dirty = false; setSave("salvo", "ok"); }
+    await refreshPlan();
+  } catch (e) { setSave("erro ao salvar", "dirty"); toast(e.message, true); }
+}
+let lastTyped = null;
+$("#text").addEventListener("input", () => {
+  // guarda a versão de antes de cada rajada de digitação para o Ctrl+Z global
+  if (lastTyped === null) pushUndo(S.textBefore ?? $("#text").value);
+  clearTimeout(lastTyped); lastTyped = setTimeout(() => { lastTyped = null; S.textBefore = $("#text").value; }, 1500);
+  queueSave();
+});
+$("#text").addEventListener("focus", () => { S.textBefore = $("#text").value; });
+
+/* marcações de uma palavra: mesmo formato que transcript.parse_markup lê */
+const TOKEN_RX = /\{\/?card\}|["“”]|(?:(?!\{\/?card\})[^\s"“”])+/g;
+const MARK_RX = [[/^\(\((.+)\)\)$/, "circle"], [/^\*(.+)\*$/, "emph"], [/^!(.+)!$/, "red"],
+                 [/^_(.+)_$/, "underline"], [/^\[(.+)\]$/, "box"], [/^~(.+)$/, "solo"]];
+function parseTok(raw) {
+  const flags = new Set(); let color = null;
+  if (raw.startsWith("!") && (raw.match(/!/g) || []).length >= 2) {
+    const m = raw.match(/^!(.+?)!([.,?;:…]*)$/);
+    if (m) { raw = m[1] + m[2]; flags.add("red"); }
+  }
+  const m = raw.match(/^(.*?)([.,!?;:…]*)$/s);
+  let core = m[1]; const tail = m[2];
+  let changed = true;
+  while (changed && core) {
+    changed = false;
+    for (const [rx, f] of MARK_RX) { const mm = core.match(rx); if (mm) { core = mm[1]; flags.add(f); changed = true; } }
+    const mc = core.match(/^\{(#[0-9a-fA-F]{6})\}(.+)$/);
+    if (mc) { color = mc[1].toUpperCase(); core = mc[2]; changed = true; }
+    const mn = core.match(/^\{-\}(.+)$/);
+    if (mn) { flags.add("noemph"); flags.delete("emph"); core = mn[1]; changed = true; }
+  }
+  return { core, tail, flags, color };
+}
+function buildTok({ core, tail, flags, color }) {
+  // vermelho por fora (o "!" final não pode virar pontuação), cor por dentro
+  let s = core;
+  if (color) s = `{${color}}${s}`;
+  if (flags.has("noemph") && !flags.has("emph")) s = `{-}${s}`;
+  if (flags.has("box")) s = `[${s}]`;
+  if (flags.has("underline")) s = `_${s}_`;
+  if (flags.has("emph")) s = `*${s}*`;
+  if (flags.has("circle")) s = `((${s}))`;
+  if (flags.has("solo")) s = `~${s}`;
+  if (flags.has("red")) s = `!${s}!`;
+  return s + tail;
+}
+// troca trechos [s,e) do texto (de trás para frente, para os índices continuarem valendo)
+function spliceText(v, reps) {
+  for (const [s, e, txt] of [...reps].sort((a, b) => b[0] - a[0])) v = v.slice(0, s) + txt + v.slice(e);
+  return v;
+}
+function pushUndo(v) { if (S.undo.at(-1) !== v) { S.undo.push(v); if (S.undo.length > 60) S.undo.shift(); } }
+function setText(v, undoable = true) {
+  const ta = $("#text");
+  if (v === ta.value) return;
+  if (undoable) pushUndo(ta.value);
+  ta.value = v; S.textBefore = v;
+  S.dirty = true; setSave("salvando…", "dirty");
+  return saveNow();
+}
+function undoText() {
+  const v = S.undo.pop();
+  if (v === undefined) return toast("Nada para desfazer");
+  setText(v, false); toast("Desfeito");
+}
+// liga/desliga um efeito: se todas já têm, tira de todas; senão põe em todas
+function toggleFlag(toks, mark) {
+  const all = toks.every(t => t.p.flags.has(mark));
+  for (const t of toks) {
+    if (all) t.p.flags.delete(mark); else t.p.flags.add(mark);
+    if (mark === "solo" && !all) t.p.flags.delete("break");
+  }
+}
+
 $$("#marks button").forEach(btn => btn.addEventListener("click", () => {
   const ta = $("#text"); const mark = btn.dataset.mark;
-  let { selectionStart: s, selectionEnd: e, value: v } = ta;
+  const { selectionStart: s, selectionEnd: e, value: v } = ta;
   if (mark === "break") {
-    ta.setRangeText(" | ", s, s, "end");
+    pushUndo(v); ta.setRangeText(" | ", s, s, "end");
   } else if (mark === "card") {
     if (s === e) return toast("Selecione o trecho que vira card");
-    ta.setRangeText(`"${v.slice(s, e).replace(/"/g, "")}"`, s, e, "select");
+    pushUndo(v); ta.setRangeText(`"${v.slice(s, e).replace(/"/g, "")}"`, s, e, "select");
   } else {
-    // expande a seleção até palavras inteiras
-    while (s > 0 && !/\s/.test(v[s - 1])) s--;
-    while (e > s && /\s/.test(v[e - 1])) e--;
-    while (e < v.length && !/\s/.test(v[e])) e++;
-    if (s === e) return toast("Selecione uma ou mais palavras");
-    const out = v.slice(s, e).split(/(\s+)/).map(t => (/\S/.test(t) ? wrapWord(t, mark) : t)).join("");
-    ta.setRangeText(out, s, e, "select");
+    const toks = textTokens(v, s, e);
+    if (!toks.length) return toast("Selecione uma ou mais palavras");
+    toggleFlag(toks, mark);
+    applyTextTokens(toks);
+    return;
   }
-  ta.focus(); setSave("editando…", "dirty"); saveText();
+  ta.focus(); queueSave(0);
 }));
+$("#markColor").addEventListener("change", e => {
+  const ta = $("#text");
+  const toks = textTokens(ta.value, ta.selectionStart, ta.selectionEnd);
+  if (!toks.length) return toast("Selecione uma ou mais palavras");
+  for (const t of toks) t.p.color = e.target.value.toUpperCase();
+  applyTextTokens(toks);
+});
+// palavras do textarea que tocam a seleção [s,e)
+function textTokens(v, s, e) {
+  const out = [];
+  for (const m of v.matchAll(TOKEN_RX)) {
+    const a = m.index, b = a + m[0].length;
+    if (s === e ? (s < a || s > b) : (a >= e || b <= s)) continue;
+    if (m[0] === "|" || /^(\{\/?card\}|["“”])$/.test(m[0])) continue;
+    const p = parseTok(m[0]);
+    if (p.core) out.push({ s: a, e: b, p });
+  }
+  return out;
+}
+function applyTextTokens(toks) {
+  const ta = $("#text");
+  const v = spliceText(ta.value, toks.map(t => [t.s, t.e, buildTok(t.p)]));
+  const a = toks[0].s, delta = v.length - ta.value.length;
+  setText(v);
+  ta.focus(); ta.setSelectionRange(a, toks.at(-1).e + delta);
+}
+
+// clicar numa palavra do texto leva o vídeo até ela
+$("#text").addEventListener("click", () => {
+  const ta = $("#text");
+  if (S.dirty || !S.plan || ta.selectionStart !== ta.selectionEnd) return;
+  const c = ta.selectionStart;
+  const i = S.plan.words.findIndex(w => w.span && w.span[0] <= c && c <= w.span[1]);
+  if (i < 0) return;
+  S.sel = [i]; S.anchor = i;
+  seek(S.plan.words[i].start + 0.03);
+});
+
+/* ------------------------------------------------------------ edição direto no preview */
+function drawHits() {
+  const box = $("#hits"); box.innerHTML = "";
+  box.style.transform = ""; box.classList.remove("dragging");
+  for (const h of S.hits) {
+    const el = document.createElement("div");
+    el.className = "hit" + (S.sel.includes(h.wi) ? " sel" : "");
+    el.style.left = `${h.x0 * 100}%`; el.style.top = `${h.y0 * 100}%`;
+    el.style.width = `${(h.x1 - h.x0) * 100}%`; el.style.height = `${(h.y1 - h.y0) * 100}%`;
+    el.dataset.wi = h.wi;
+    box.appendChild(el);
+  }
+  renderPop();
+}
+// arrastar uma palavra move a legenda inteira (layout.offset_x / offset_y); clique sem arrastar seleciona
+let drag = null, dragMoved = false;
+const curOffset = p => getPath(merge(S.base, S.overrides), p) ?? 0;
+$("#hits").addEventListener("pointerdown", e => {
+  dragMoved = false;   // depois de um arrastar o navegador nem sempre dispara "click": zera a cada toque
+  if (e.button !== 0 || !e.target.closest(".hit")) return;
+  drag = { x: e.clientX, y: e.clientY, moved: false, id: e.pointerId,
+           ox: curOffset("layout.offset_x"), oy: curOffset("layout.offset_y") };
+});
+$("#hits").addEventListener("pointermove", e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+  if (!drag.moved) {
+    // só captura o ponteiro quando vira arrastar; antes disso o clique precisa chegar na palavra
+    drag.moved = true; clearSel();
+    $("#hits").setPointerCapture(drag.id);
+  }
+  const box = $("#hits"), r = $("#phone").getBoundingClientRect();
+  box.classList.add("dragging");
+  box.style.transform = `translate(${dx}px, ${dy}px)`;
+  drag.nx = Math.max(-.3, Math.min(.3, Math.round((drag.ox + dx / r.width) * 200) / 200));
+  drag.ny = Math.max(-.3, Math.min(.3, Math.round((drag.oy + dy / r.height) * 200) / 200));
+  if (Math.abs(drag.nx) < .015) drag.nx = 0;   // gruda no centro
+  $("#dragTip").hidden = false;
+  $("#dragTip").textContent = `${drag.nx === 0 ? "centro" : `${drag.nx > 0 ? "→" : "←"} ${Math.round(Math.abs(drag.nx) * 100)}%`} · ${drag.ny === 0 ? "altura do estilo" : `${drag.ny > 0 ? "↓" : "↑"} ${Math.round(Math.abs(drag.ny) * 100)}%`}`;
+});
+$("#hits").addEventListener("pointercancel", () => { drag = null; $("#dragTip").hidden = true; drawHits(); });
+$("#hits").addEventListener("pointerup", () => {
+  if (!drag) return;
+  const d = drag; drag = null; $("#dragTip").hidden = true;
+  if (!d.moved) return;
+  dragMoved = true;
+  setOverride("layout.offset_x", d.nx); setOverride("layout.offset_y", d.ny); syncControls();
+});
+$("#hits").addEventListener("click", e => {
+  if (dragMoved) { dragMoved = false; return; }
+  const h = e.target.closest(".hit");
+  if (!h) return clearSel();
+  const wi = +h.dataset.wi;
+  if (e.shiftKey && S.anchor != null) {
+    const [a, b] = [Math.min(S.anchor, wi), Math.max(S.anchor, wi)];
+    S.sel = Array.from({ length: b - a + 1 }, (_, k) => a + k);
+  } else if (e.ctrlKey || e.metaKey) {
+    S.sel = S.sel.includes(wi) ? S.sel.filter(x => x !== wi) : [...S.sel, wi].sort((x, y) => x - y);
+    S.anchor = wi;
+  } else { S.sel = [wi]; S.anchor = wi; }
+  drawHits();
+  const w = S.plan.words[S.sel[0]];
+  if (w?.span && !S.dirty) $("#text").setSelectionRange(w.span[0], S.plan.words[S.sel.at(-1)].span[1]);
+  if (S.sel.length) setTimeout(() => { const i = $("#wpText"); i.focus(); i.select(); }, 0);
+});
+function clearSel() {
+  S.sel = []; S.anchor = null;
+  $$("#hits .hit.sel").forEach(el => el.classList.remove("sel"));
+  $("#wordPop").hidden = true;
+}
+
+const selToks = () => {
+  const v = $("#text").value;
+  return S.sel.map(i => S.plan.words[i]).filter(w => w?.span)
+    .map(w => ({ s: w.span[0], e: w.span[1], p: parseTok(v.slice(w.span[0], w.span[1])) }));
+};
+const SWATCHES = () => [
+  [null, "Padrão do estilo"], [S.base?.colors?.text, "Texto"], [S.base?.colors?.red, "Destaque"],
+  [S.base?.colors?.accent, "Elipse"], ["#FFFFFF", "Branco"], ["#FFD60A", "Amarelo"], ["#FF8A00", "Laranja"],
+  ["#E3241D", "Vermelho"], ["#49DC7B", "Verde"], ["#3DA5FF", "Azul"], ["#B86CFF", "Roxo"], ["#111111", "Preto"],
+].filter(([c], k, a) => k === 0 || (c && a.findIndex(([x]) => x?.toUpperCase() === c.toUpperCase()) === k));
+
+function renderPop() {
+  const pop = $("#wordPop");
+  const pl = $("#player");
+  if (!S.sel.length || !S.plan || (!pl.hidden && !pl.paused)) { pop.hidden = true; return; }
+  const toks = selToks();
+  if (!toks.length) { pop.hidden = true; return; }
+  pop.hidden = false;
+  $("#wpCount").textContent = toks.length === 1 ? "1 palavra" : `${toks.length} palavras`;
+  const inp = $("#wpText");
+  if (document.activeElement !== inp || inp.dataset.sel !== S.sel.join()) {
+    inp.value = toks.map(t => t.p.core + t.p.tail).join(" ");
+    inp.dataset.sel = S.sel.join();
+  }
+  const v = $("#text").value;
+  const lastEnd = toks.at(-1).e;
+  for (const b of $$("#wpMarks button")) {
+    const m = b.dataset.mark;
+    b.classList.toggle("on", m === "break" ? /^\s*\|/.test(v.slice(lastEnd))
+      : m === "destaque" ? S.sel.every(i => S.plan.words[i]?.emph) : toks.every(t => t.p.flags.has(m)));
+  }
+  const cur = toks.every(t => t.p.color === toks[0].p.color) ? toks[0].p.color : undefined;
+  const sw = $("#wpColors");
+  sw.innerHTML = SWATCHES().map(([c, n]) => c
+    ? `<button class="sw${cur === c.toUpperCase() ? " on" : ""}" data-c="${c.toUpperCase()}" title="${n} ${c.toUpperCase()}" style="--c:${c}"></button>`
+    : `<button class="sw sw-none${cur === null ? " on" : ""}" data-c="" title="${n}"></button>`).join("") +
+    `<label class="sw sw-pick" title="Outra cor"><input type="color" value="${(cur || "#ffd60a").toLowerCase()}"></label>`;
+  placePop();
+}
+function placePop() {
+  const pop = $("#wordPop"), wrap = $(".phone-wrap"), phone = $("#phone");
+  const wr = wrap.getBoundingClientRect(), pr = phone.getBoundingClientRect();
+  const hs = S.hits.filter(h => S.sel.includes(h.wi));
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  let top = pr.top - wr.top + pr.height * 0.45 - ph / 2;
+  let x0 = pr.left, x1 = pr.right, y1 = pr.top + pr.height * 0.5;
+  if (hs.length) {
+    x0 = pr.left + Math.min(...hs.map(h => h.x0)) * pr.width; x1 = pr.left + Math.max(...hs.map(h => h.x1)) * pr.width;
+    const y0 = pr.top + Math.min(...hs.map(h => h.y0)) * pr.height; y1 = pr.top + Math.max(...hs.map(h => h.y1)) * pr.height;
+    top = (y0 + y1) / 2 - wr.top - ph / 2;
+  }
+  let left;
+  if (wr.right - pr.right >= pw + 18) left = pr.right - wr.left + 14;          // ao lado do vídeo
+  else if (pr.left - wr.left >= pw + 18) left = pr.left - wr.left - pw - 14;
+  else {                                                                          // por cima, abaixo das palavras
+    left = (x0 + x1) / 2 - wr.left - pw / 2;
+    top = y1 - wr.top + 12;
+    if (top + ph > wr.height - 8) top = (hs.length ? pr.top + Math.min(...hs.map(h => h.y0)) * pr.height : y1) - wr.top - ph - 12;
+  }
+  pop.style.left = `${Math.max(8, Math.min(wr.width - pw - 8, left))}px`;
+  pop.style.top = `${Math.max(8, Math.min(wr.height - ph - 8, top))}px`;
+}
+window.addEventListener("resize", () => { if (!$("#wordPop").hidden) placePop(); });
+
+let editing = false;   // uma edição por vez: as posições das palavras só valem depois do plano novo
+async function editSel(fn) {
+  if (editing) return;
+  editing = true;
+  try {
+    if (S.dirty) await saveNow();
+    const toks = selToks();
+    if (!toks.length) return;
+    const v = fn(toks, $("#text").value);
+    if (typeof v === "string") await setText(v);
+  } finally { editing = false; }
+}
+$("#wpClose").addEventListener("click", clearSel);
+$("#wpMarks").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  const mark = b.dataset.mark;
+  editSel((toks, v) => {
+    if (mark === "destaque") {
+      // liga: força o destaque; desliga: tira também o destaque que o motor escolheu sozinho
+      const on = S.sel.every(i => S.plan.words[i]?.emph);
+      for (const t of toks) {
+        if (on) { t.p.flags.delete("emph"); t.p.flags.add("noemph"); }
+        else { t.p.flags.delete("noemph"); t.p.flags.add("emph"); }
+      }
+      return spliceText(v, toks.map(t => [t.s, t.e, buildTok(t.p)]));
+    }
+    if (mark === "break") {
+      const end = toks.at(-1).e, m = v.slice(end).match(/^(\s*)\|/);
+      return m ? v.slice(0, end) + v.slice(end + m[0].length) : v.slice(0, end) + " |" + v.slice(end);
+    }
+    toggleFlag(toks, mark);
+    return spliceText(v, toks.map(t => [t.s, t.e, buildTok(t.p)]));
+  });
+});
+$("#wpColors").addEventListener("click", e => {
+  const b = e.target.closest("button.sw"); if (!b) return;
+  const c = b.dataset.c || null;
+  editSel((toks, v) => { toks.forEach(t => { t.p.color = c; }); return spliceText(v, toks.map(t => [t.s, t.e, buildTok(t.p)])); });
+});
+$("#wpColors").addEventListener("change", e => {
+  if (e.target.type !== "color") return;
+  const c = e.target.value.toUpperCase();
+  editSel((toks, v) => { toks.forEach(t => { t.p.color = c; }); return spliceText(v, toks.map(t => [t.s, t.e, buildTok(t.p)])); });
+});
+function applyWordText() {
+  const typed = $("#wpText").value.trim();
+  editSel((toks, v) => {
+    const now = toks.map(t => t.p.core + t.p.tail).join(" ");
+    if (typed === now) return;
+    const parts = typed ? typed.split(/\s+/) : [];
+    if (parts.length === toks.length) {
+      // mesma quantidade de palavras: corrige uma a uma mantendo efeitos e cor
+      return spliceText(v, toks.map((t, k) => {
+        const n = parseTok(parts[k]);
+        return [t.s, t.e, buildTok({ ...t.p, core: n.core || parts[k], tail: n.tail })];
+      }));
+    }
+    const contiguous = S.sel.every((x, k) => k === 0 || x === S.sel[k - 1] + 1);
+    if (!contiguous) { toast("Para mudar a quantidade de palavras, selecione um trecho seguido (shift+clique)", true); return; }
+    // quantidade diferente: troca o trecho inteiro (os efeitos da primeira palavra vão para a primeira nova)
+    let out = parts.slice();
+    if (out.length) { const n = parseTok(out[0]); out[0] = buildTok({ ...toks[0].p, core: n.core || out[0], tail: n.tail }); }
+    const a = toks[0].s, b = toks.at(-1).e;
+    S.sel = out.length ? Array.from({ length: out.length }, (_, k) => S.sel[0] + k) : [];
+    if (!out.length) return v.slice(0, a) + v.slice(b).replace(/^[ \t]+/, ""); // apagou: leva o espaço junto
+    return v.slice(0, a) + out.join(" ") + v.slice(b);
+  });
+}
+$("#wpText").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); applyWordText(); }
+  if (e.key === "Escape") { e.preventDefault(); $("#wpText").blur(); clearSel(); }
+});
 
 $("#btnRetrans").addEventListener("click", async () => {
   if (!S.cur) return;
@@ -528,8 +919,7 @@ $("#btnResetStyle").addEventListener("click", async () => {
   await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { overrides: {} } }); refreshPlan();
 });
 $("#btnSavePreset").addEventListener("click", async () => {
-  const name = $("#newPresetName").value.trim();
-  if (!name) return toast("Dê um nome para o preset", true);
+  const name = $("#newPresetName").value.trim();   // vazio: o servidor usa o próximo número
   const data = merge(S.base, S.overrides);
   try {
     const r = await api("/api/presets", { method: "POST", body: { name, description: $("#newPresetDesc").value.trim(), data } });
@@ -537,7 +927,7 @@ $("#btnSavePreset").addEventListener("click", async () => {
     S.cur.preset = r.name; S.overrides = {};
     await loadPresets(); refreshPlan();
     $("#newPresetName").value = ""; $("#newPresetDesc").value = "";
-    toast(`Preset “${r.name}” salvo`);
+    toast(`“${name || $("#newPresetName").placeholder}” salvo`);
   } catch (e) { toast(e.message, true); }
 });
 

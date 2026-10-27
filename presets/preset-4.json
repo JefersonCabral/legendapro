@@ -1,0 +1,155 @@
+{
+  "name": "preset-4",
+  "title": "Preset 4",
+  "description": "Referência v4: texto em serifada fina branca com brilho, palavra-chave enorme amarelo-limão em sans pesada que sobe com borrão de movimento, linhas de apoio encaixadas com recuo, gradiente escuro.",
+  "fonts": {
+    "sans": {
+      "file": "Tinos-Regular.ttf",
+      "tracking": -0.08
+    },
+    "hero": {
+      "file": "Arimo-VF.ttf",
+      "weight": 700,
+      "tracking": -0.08
+    },
+    "serif": {
+      "file": "Tinos-Regular.ttf",
+      "tracking": -0.06
+    }
+  },
+  "layout": {
+    "anchor_mode": "baseline",
+    "anchor_y": 0.75,
+    "safe_width": 0.86,
+    "base_size": 0.103,
+    "support_scale": 1.0,
+    "hero_scale": 2.65,
+    "hero_max_width": 0.8,
+    "serif_scale": 1.2,
+    "above_align": "left",
+    "above_indent": 0.093,
+    "below_align": "left",
+    "below_indent": 0.074,
+    "indent_fit": 1.0,
+    "gap_above": 0.018,
+    "gap_below": 0.008
+  },
+  "colors": {
+    "text": "#FFFFFF",
+    "hero": "#F4FC14",
+    "red": "#FF3B30",
+    "accent": "#F4FC14"
+  },
+  "effects": {
+    "shadow": {
+      "opacity": 0.0,
+      "blur": 0.005,
+      "offset_y": 0.0
+    },
+    "gradient": {
+      "enabled": true,
+      "top": 0.3,
+      "full": 1.0,
+      "opacity": 0.89,
+      "curve": 2.1,
+      "color": "#000000"
+    },
+    "glow": {
+      "plain": {
+        "layers": [
+          [
+            0.027,
+            0.8
+          ],
+          [
+            0.082,
+            1.0
+          ]
+        ],
+        "color": null,
+        "blend": "normal",
+        "opacity": 0.7
+      },
+      "support": {
+        "layers": [
+          [
+            0.027,
+            0.8
+          ],
+          [
+            0.082,
+            1.0
+          ]
+        ],
+        "color": null,
+        "blend": "normal",
+        "opacity": 0.7
+      },
+      "hero": {
+        "layers": [
+          [
+            0.022,
+            0.4
+          ],
+          [
+            0.1,
+            0.6
+          ]
+        ],
+        "color": null,
+        "blend": "normal",
+        "opacity": 0.85
+      }
+    },
+    "anim": {
+      "plain": {
+        "type": "cut",
+        "reveal": "scene"
+      },
+      "support": {
+        "type": "fade",
+        "reveal": "word",
+        "duration": 0.32,
+        "fade": 0.32,
+        "dist": 0.0
+      },
+      "hero": {
+        "type": "rise",
+        "reveal": "word",
+        "duration": 0.5,
+        "fade": 0.4,
+        "from": "below",
+        "dist": 0.12,
+        "motion_blur": 1.0
+      },
+      "serif": {
+        "type": "fade",
+        "reveal": "word",
+        "duration": 0.32,
+        "fade": 0.32
+      }
+    },
+    "exit": {
+      "type": "cut"
+    },
+    "lead": 0.02
+  },
+  "rules": {
+    "engine": "phrase",
+    "emphasis_threshold": 2.4,
+    "emphasis_every": 14.0,
+    "emphasis_gap": 8.0,
+    "phrase_max_words": 7,
+    "support_max_words": 3,
+    "support_max_chars": 18,
+    "chunk_max_words": 4,
+    "chunk_max_chars": 18,
+    "chunk_pause": 0.35,
+    "max_hold": 0.85,
+    "case": "lower",
+    "strip_punct": ".,!?;:…",
+    "hero_number_unit": true,
+    "serif_tail": false,
+    "article_alone": false
+  }
+}

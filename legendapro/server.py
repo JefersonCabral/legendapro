@@ -20,13 +20,13 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import numpy as np
 
-from . import transcript
+from . import presets, transcript
 from .gpu import cuda_available, nvenc_available
 from .planner import Planner
 from .render import ROOT, FONT_DIR, Renderer, probe, render_video, Cancelled
 
 UI_DIR = os.path.join(ROOT, "ui")
-PRESET_DIR = os.path.join(ROOT, "presets")
+PRESET_DIR = presets.PRESET_DIR
 PROJ_DIR = os.path.join(ROOT, "projects")
 os.makedirs(PROJ_DIR, exist_ok=True)
 
@@ -35,23 +35,14 @@ MODELS = ["large-v3-turbo", "large-v3", "medium", "small", "tiny"]
 # ---------------------------------------------------------------- presets
 
 def list_presets():
-    out = []
-    for f in sorted(os.listdir(PRESET_DIR)):
-        if f.endswith(".json"):
-            try:
-                out.append(json.load(open(os.path.join(PRESET_DIR, f), encoding="utf-8")))
-            except Exception:
-                pass
-    return out
+    return presets.load_all()
 
 
 def load_preset(name):
-    return json.load(open(os.path.join(PRESET_DIR, safe_name(name) + ".json"), encoding="utf-8"))
+    return presets.load(name)
 
 
-def safe_name(s):
-    s = re.sub(r"[^a-z0-9_-]+", "-", s.lower().strip()).strip("-")
-    return s or "preset"
+safe_name = presets.safe_name
 
 
 def deep_merge(base, over):
@@ -92,10 +83,14 @@ def write_meta(pid, meta):
 
 def project_summary(pid):
     m = read_meta(pid)
+    m["preset"] = presets.resolve(m.get("preset"))
     d = pdir(pid)
     m["has_words"] = os.path.exists(os.path.join(d, "words.json"))
     m["exports"] = sorted(f for f in os.listdir(d) if f.startswith("legendado") or f.startswith("legenda-alpha"))
-    m["has_preview"] = os.path.exists(os.path.join(d, "preview.mp4"))
+    pv = m.get("preview") or {}
+    m["has_preview"] = bool(pv.get("file")) and os.path.exists(os.path.join(d, pv["file"]))
+    if not m["has_preview"]:
+        m.pop("preview", None)
     return m
 
 
@@ -113,7 +108,7 @@ def words_to_text(words):
 
 def project_style(pid):
     meta = read_meta(pid)
-    base = load_preset(meta.get("preset", "desculpa"))
+    base = load_preset(meta.get("preset", presets.DEFAULT))
     return deep_merge(base, meta.get("overrides", {}))
 
 
@@ -131,6 +126,13 @@ def project_plan(pid):
         return key, style, _plan_cache[key]
     words = transcript.align_text(text, raw) if text.strip() else raw
     plan = Planner(style).plan(words) if words else {"preset": style["name"], "scenes": [], "flashes": []}
+    # onde cada palavra está no text.txt (a interface edita o texto a partir do clique no preview)
+    spans = transcript.parse_markup(text, spans=True)[1] if text.strip() else [None] * len(words)
+    # palavras que viraram o destaque do estilo (herói / serifada de ênfase), para o botão "Destaque"
+    hero = {t["wi"] for sc in plan["scenes"] for l in sc["lines"] for t in l["tokens"]
+            if t.get("anim") == "hero" or (t["role"] == "serif" and sc["mode"] == "stack")}
+    plan["words"] = [{"start": round(w.start, 3), "end": round(w.end, 3), "span": sp, "emph": i in hero}
+                     for i, (w, sp) in enumerate(zip(words, spans))]
     _plan_cache.clear()
     _plan_cache[key] = plan
     return key, style, plan
@@ -173,8 +175,9 @@ SAMPLE = [("Essa", .0), ("é", .25), ("a", .5), ("sua", .62), ("desculpa", .8), 
 def preset_thumb(name):
     cache_dir = os.path.join(PRESET_DIR, "_thumbs")
     os.makedirs(cache_dir, exist_ok=True)
-    p = os.path.join(PRESET_DIR, safe_name(name) + ".json")
-    out = os.path.join(cache_dir, safe_name(name) + ".jpg")
+    name = presets.resolve(name)
+    p = os.path.join(PRESET_DIR, name + ".json")
+    out = os.path.join(cache_dir, name + ".jpg")
     if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(p):
         return open(out, "rb").read()
     style = load_preset(name)
@@ -184,7 +187,11 @@ def preset_thumb(name):
     plan = Planner(style).plan(words)
     W, H = 540, 960
     yy = np.linspace(0, 1, H)[:, None, None]
-    bg = (np.array([34, 30, 28]) * (1 - yy) + np.array([12, 11, 10]) * yy).astype(np.uint8)
+    ink = style["colors"]["text"].lstrip("#")
+    if sum(int(ink[i:i + 2], 16) for i in (0, 2, 4)) < 3 * 110:   # texto escuro: miniatura em fundo claro
+        bg = (np.array([246, 246, 246]) * (1 - yy) + np.array([228, 228, 228]) * yy).astype(np.uint8)
+    else:
+        bg = (np.array([34, 30, 28]) * (1 - yy) + np.array([12, 11, 10]) * yy).astype(np.uint8)
     bg = np.repeat(bg, W, axis=1)
     R = Renderer(style, plan, W, H)
     img = R.frame(1.9, bg)
@@ -194,6 +201,11 @@ def preset_thumb(name):
     cy = int(np.median(ink[0])) if len(ink[0]) else H // 2
     cx = W // 2
     hh, hw = 190, 170
+    if len(ink[1]):
+        # destaques largos: abre o recorte até caber o texto inteiro (mantendo a proporção)
+        need = max(cx - ink[1].min(), ink[1].max() - cx) + 14
+        if need > hw:
+            hh, hw = int(hh * need / hw), min(need, W // 2)
     img = img[max(0, cy - hh):cy + hh, max(0, cx - hw):cx + hw]
     img = cv2.resize(img, (340, 380), interpolation=cv2.INTER_AREA)
     data = jpeg(img, 90)
@@ -262,9 +274,11 @@ def job_render(pid, kind, opts):
         alpha = kind == "alpha"
         size = None
         if kind == "preview":
-            h = 960 if meta["height"] > 960 else meta["height"]
+            # leve, para refazer sozinha a cada alteração; nome novo a cada vez para não
+            # sobrescrever o arquivo que o navegador ainda pode estar tocando
+            h = min(720, meta["height"])
             size = (int(meta["width"] * h / meta["height"]) // 2 * 2, h)
-            out = os.path.join(d, "preview.mp4")
+            out = os.path.join(d, f"preview-{job['id']}.mp4")
         elif alpha:
             out = os.path.join(d, "legenda-alpha.mov")
         else:
@@ -275,17 +289,36 @@ def job_render(pid, kind, opts):
             out = os.path.join(d, "legendado.mp4")
         if alpha:
             size = (meta["width"], meta["height"])
-        tmp = out + ".part" + os.path.splitext(out)[1]
+        tmp = out + f".{job['id']}.part" + os.path.splitext(out)[1]
         job["message"] = "Renderizando prévia…" if kind == "preview" else "Renderizando…"
 
         def prog(k, n):
             job["progress"] = round(k / max(n, 1), 3)
             job["message"] = f"{k}/{n} frames"
-        render_video(style, plan, tmp, video=None if alpha else src, size=size,
-                     fps=meta["fps"], duration=meta["duration"], alpha=alpha,
-                     progress=prog, cancel=lambda: job["cancel"], crf=int(opts.get("quality", 18)))
-        os.replace(tmp, out)
-        return {"file": os.path.basename(out), "url": f"/files/{pid}/{os.path.basename(out)}?v={int(time.time())}"}
+        try:
+            render_video(style, plan, tmp, video=None if alpha else src, size=size,
+                         fps=meta["fps"], duration=meta["duration"], alpha=alpha,
+                         progress=prog, cancel=lambda: job["cancel"],
+                         crf=23 if kind == "preview" else int(opts.get("quality", 18)))
+            os.replace(tmp, out)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+        name = os.path.basename(out)
+        if kind == "preview":
+            meta = read_meta(pid)
+            meta["preview"] = {"file": name, "key": key}
+            write_meta(pid, meta)
+            for f in os.listdir(d):   # prévias antigas (pode falhar se o navegador ainda segura o arquivo)
+                if f.startswith("preview") and f.endswith(".mp4") and ".part" not in f and f != name:
+                    try:
+                        os.remove(os.path.join(d, f))
+                    except OSError:
+                        pass
+        return {"file": name, "key": key, "url": f"/files/{pid}/{name}?v={int(time.time())}"}
     return new_job(kind, pid, fn)
 
 
@@ -415,13 +448,16 @@ class Handler(BaseHTTPRequestHandler):
                         "default_model": transcript.DEFAULT_MODEL})
 
     def api_presets(self, q):
-        self.send_json({"presets": list_presets(), "fonts": list_fonts()})
+        self.send_json({"presets": list_presets(), "fonts": list_fonts(), "next_title": presets.next_title(),
+                        "builtin": sorted(presets.BUILTIN)})
 
     def api_preset_save(self, q):
         b = self.body_json()
         data = b["data"]
-        name = safe_name(b.get("name") or data.get("name", "novo"))
+        title = (b.get("name") or "").strip() or presets.next_title()
+        name = safe_name(title)
         data["name"] = name
+        data["title"] = title
         if b.get("description"):
             data["description"] = b["description"]
         p = os.path.join(PRESET_DIR, name + ".json")
@@ -431,9 +467,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"ok": True, "name": name})
 
     def api_preset_delete(self, q, name):
-        if name in ("galho", "desculpa"):
+        name = presets.resolve(name)
+        if name in presets.BUILTIN:
             return self.send_json({"error": "os presets de referência não podem ser apagados"}, 400)
-        p = os.path.join(PRESET_DIR, safe_name(name) + ".json")
+        p = os.path.join(PRESET_DIR, name + ".json")
         if os.path.exists(p):
             os.remove(p)
         self.send_json({"ok": True})
@@ -477,7 +514,7 @@ class Handler(BaseHTTPRequestHandler):
         open(os.path.join(d, "thumb.jpg"), "wb").write(thumb)
         meta = {"id": pid, "name": os.path.splitext(name)[0], "file": "input" + ext, "width": W, "height": H,
                 "fps": fps, "duration": dur, "created": time.time(), "status": "novo",
-                "preset": q.get("preset", "desculpa"), "overrides": {}, "language": "pt"}
+                "preset": presets.resolve(q.get("preset")), "overrides": {}, "language": "pt"}
         open(os.path.join(d, "meta.json"), "w", encoding="utf-8").write(json.dumps(meta, ensure_ascii=False))
         job = job_transcribe(pid, q.get("model") or transcript.DEFAULT_MODEL)
         self.send_json({"project": project_summary(pid), "job": job_public(job)})
@@ -504,7 +541,7 @@ class Handler(BaseHTTPRequestHandler):
         if "text" in b:
             open(os.path.join(pdir(pid), "text.txt"), "w", encoding="utf-8").write(b["text"])
         if "preset" in b:
-            meta["preset"] = safe_name(b["preset"])
+            meta["preset"] = presets.resolve(b["preset"])
             if b.get("reset_overrides", True):
                 meta["overrides"] = {}
         if "overrides" in b:
@@ -522,7 +559,12 @@ class Handler(BaseHTTPRequestHandler):
                    "red": any(t["color"].lower() == style["colors"]["red"].lower() for l in s["lines"] for t in l["tokens"]),
                    "decos": [d["kind"] for d in s.get("decos", [])]}
                   for s in plan["scenes"]]
-        self.send_json({"key": key, "duration": meta["duration"], "scenes": scenes, "flashes": plan["flashes"]})
+        self.send_json({"key": key, "duration": meta["duration"], "scenes": scenes, "flashes": plan["flashes"],
+                        "words": plan.get("words", [])})
+
+    def api_hits(self, q, pid):
+        key, style, plan = project_plan(pid)
+        self.send_json({"key": key, "hits": renderer_for(pid, key, style, plan).hits(float(q.get("t", 0)))})
 
     def api_frame(self, q, pid):
         meta = read_meta(pid)
@@ -584,6 +626,7 @@ ROUTES = [
     ("DELETE", r"/api/projects/(\w+)", Handler.api_project_delete),
     ("GET", r"/api/projects/(\w+)/plan", Handler.api_plan),
     ("GET", r"/api/projects/(\w+)/frame\.jpg", Handler.api_frame),
+    ("GET", r"/api/projects/(\w+)/hits", Handler.api_hits),
     ("GET", r"/api/projects/(\w+)/thumb\.jpg", Handler.api_thumb),
     ("POST", r"/api/projects/(\w+)/transcribe", Handler.api_transcribe),
     ("POST", r"/api/projects/(\w+)/render", Handler.api_render),

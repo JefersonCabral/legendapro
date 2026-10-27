@@ -1,5 +1,6 @@
 {
-  "name": "desculpa",
+  "name": "preset-2",
+  "title": "Preset 2",
   "description": "Estilo do vídeo 2 ('essa é a sua desculpa favorita'): pilhas centralizadas que sobem conforme crescem, serifada vermelha viva piscando, caixa vermelha em negações, elipse verde desenhada à mão, sublinhado em traço e palavras solo com pop.",
   "fonts": {
     "sans": {
@@ -85,7 +86,15 @@
       "duration": 0.26,
       "min_interval": 8.0
     },
-    "rolling_window": 2
+    "rolling_window": 2,
+    "gradient": {
+      "enabled": false,
+      "top": 0.45,
+      "full": 0.95,
+      "opacity": 0.75,
+      "curve": 1.0,
+      "color": "#000000"
+    }
   },
   "rules": {
     "emphasis_threshold": 2.4,

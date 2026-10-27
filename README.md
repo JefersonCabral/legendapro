@@ -41,8 +41,8 @@ As ênfases vêm de `legendapro/nlp_pt.py`: tamanho da palavra, léxico de impac
 
 Cada preset é um JSON em `presets/`. Os dois de referência foram reconstruídos quadro a quadro a partir dos vídeos em `ref/`:
 
-- **galho**: vídeo 1. Serifada gigante, pilha crescendo para baixo, vermelho escuro com brilho, cards verdes e flash de luz.
-- **desculpa**: vídeo 2. Pilha centralizada que sobe, vermelho vivo piscando, caixa no "Não", elipse verde, sublinhado e solos.
+- **Preset 1** (`preset-1`, antigo galho): vídeo 1. Serifada gigante, pilha crescendo para baixo, vermelho escuro com brilho, cards verdes e flash de luz.
+- **Preset 2** (`preset-2`, antigo desculpa): vídeo 2. Pilha centralizada que sobe, vermelho vivo piscando, caixa no "Não", elipse verde, sublinhado e solos.
 
 Seções do JSON:
 
@@ -57,12 +57,12 @@ Seções do JSON:
 ## Linha de comando
 
 ```
-python -m legendapro render  --video in.mp4 --preset desculpa -o out.mp4
-python -m legendapro render  --video in.mp4 --text roteiro.txt --preset galho -o out.mp4
-python -m legendapro render  --srt legenda.srt --preset galho --alpha -o legenda.mov
-python -m legendapro plan    --video in.mp4 --preset galho -o plano.json   # plano editável
+python -m legendapro render  --video in.mp4 --preset preset-2 -o out.mp4
+python -m legendapro render  --video in.mp4 --text roteiro.txt --preset preset-1 -o out.mp4
+python -m legendapro render  --srt legenda.srt --preset preset-1 --alpha -o legenda.mov
+python -m legendapro plan    --video in.mp4 --preset preset-1 -o plano.json   # plano editável
 python -m legendapro render  --plan plano.json --video in.mp4 -o out.mp4
-python -m legendapro preview --video in.mp4 --preset desculpa --at 1.2 3.4 -o prev.jpg
+python -m legendapro preview --video in.mp4 --preset preset-2 --at 1.2 3.4 -o prev.jpg
 ```
 
 ## Estrutura

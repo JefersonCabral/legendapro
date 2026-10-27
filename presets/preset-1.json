@@ -1,5 +1,6 @@
 {
-  "name": "galho",
+  "name": "preset-1",
+  "title": "Preset 1",
   "description": "Estilo do vídeo 1 ('pulando de galho em galho'): sans branca enxuta, ênfases em serifada itálica gigante, pilhas em zigue-zague crescendo para baixo, vermelho escuro com brilho, cards de citação verdes e flash de luz.",
   "fonts": {
     "sans": {
@@ -85,7 +86,15 @@
       "duration": 0.2,
       "min_interval": 9.0
     },
-    "rolling_window": 0
+    "rolling_window": 0,
+    "gradient": {
+      "enabled": false,
+      "top": 0.45,
+      "full": 0.95,
+      "opacity": 0.75,
+      "curve": 1.0,
+      "color": "#000000"
+    }
   },
   "rules": {
     "emphasis_threshold": 2.2,

@@ -57,11 +57,12 @@ def is_red(w):
     return normalize(w) in RED
 
 
-def score(words, i):
-    """Pontuação de ênfase da palavra i (maior = mais importante)."""
+def score(words, i, ignore_off=False):
+    """Pontuação de ênfase da palavra i (maior = mais importante).
+    ignore_off: pontua como se o destaque não tivesse sido desligado à mão ({-})."""
     w = words[i]
     n = w.norm
-    if not n:
+    if not n or ("noemph" in w.flags and not ignore_off):
         return -9
     s = min(len(n), 11) / 4.0
     if n in STOP:

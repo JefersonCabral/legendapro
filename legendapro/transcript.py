@@ -7,6 +7,8 @@ Marcações aceitas no texto (opcionais, o automático decide o resto):
   _palavra_     sublinhado em traço
   [palavra]     caixa vermelha atrás
   ~palavra      palavra solo com pop
+  {#FFD60A}palavra  cor escolhida para a palavra
+  {-}palavra    nunca vira destaque (tira o destaque automático)
   |             força quebra de cena
   "..."         trecho vira card de citação (presets com cards)
   {card} ... {/card}  idem, explícito
@@ -53,18 +55,24 @@ _MARKS = [
 ]
 
 
-def parse_markup(text):
-    """Texto livre -> lista de (palavra, flags). Mantém pontuação colada na palavra."""
-    text = text.replace("{card}", " \x01 ").replace("{/card}", " \x02 ")
-    # aspas viram card
-    text = re.sub(r"[\"“”]", lambda m: " \x03 ", text)
-    out, in_card, quote_open = [], False, False
-    for raw in text.split():
-        if raw == "\x01":
+_COLOR = re.compile(r"^\{(#[0-9a-fA-F]{6})\}(.+)$")
+_NOEMPH = re.compile(r"^\{-\}(.+)$")
+_TOKEN = re.compile(r"\{/?card\}|[\"“”]|(?:(?!\{/?card\})[^\s\"“”])+")
+
+
+def parse_markup(text, spans=False):
+    """Texto livre -> lista de (palavra, flags). Mantém pontuação colada na palavra.
+
+    spans=True devolve também (início, fim) de cada palavra no texto original, para a
+    interface localizar e editar a palavra clicada no preview."""
+    out, pos, in_card, quote_open = [], [], False, False
+    for mt in _TOKEN.finditer(text):
+        raw = mt.group(0)
+        if raw == "{card}":
             in_card = True; continue
-        if raw == "\x02":
+        if raw == "{/card}":
             in_card = False; continue
-        if raw == "\x03":
+        if raw in "\"“”":
             quote_open = not quote_open; continue
         if raw == "|":
             if out:
@@ -87,13 +95,30 @@ def parse_markup(text):
                 mm = rx.match(core)
                 if mm:
                     core = mm.group(1); flags.add(flag); changed = True
+            mm = _COLOR.match(core)
+            if mm:
+                flags = {f for f in flags if not f.startswith("color:")}
+                flags.add("color:" + mm.group(1).upper())
+                core = mm.group(2); changed = True
+            mm = _NOEMPH.match(core)
+            if mm:
+                flags.add("noemph"); flags.discard("emph")
+                core = mm.group(1); changed = True
         # marca com pontuação dentro (ex.: *tempo.*)
         if not core:
             continue
         if in_card or quote_open:
             flags.add("card")
         out.append([core + tail, flags])
+        pos.append(mt.span())
+    if spans:
+        return [(w, f) for w, f in out], pos
     return [(w, f) for w, f in out]
+
+
+def word_color(w):
+    """Cor escolhida pelo usuário ({#RRGGBB}palavra), ou None."""
+    return next((f[6:] for f in w.flags if f.startswith("color:")), None)
 
 
 # ---------------------------------------------------------------- loaders
