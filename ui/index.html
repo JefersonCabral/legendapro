@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LegendaPRO</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230e0c0b'/%3E%3Ctext x='32' y='44' font-family='Georgia' font-style='italic' font-weight='700' font-size='34' fill='%23e3241d' text-anchor='middle'%3EL%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-sans">Legenda</span><span class="brand-serif">pro</span>
+    <span class="brand-tag">motor de legendas dinâmicas</span>
+  </div>
+  <div class="project-title" id="projectTitleWrap" hidden>
+    <input id="projectTitle" spellcheck="false" aria-label="Nome do projeto">
+  </div>
+  <div class="hw" id="hw">
+    <span class="chip" id="chipGpu"><i></i>GPU</span>
+    <span class="chip" id="chipEnc"><i></i>NVENC</span>
+  </div>
+</header>
+
+<main class="studio">
+  <!-- PROJETOS ------------------------------------------------------>
+  <aside class="rail">
+    <div class="rail-head">
+      <h2 class="eyebrow">Projetos</h2>
+      <button class="btn btn-primary btn-sm" id="btnNew"><span>+</span> Novo vídeo</button>
+    </div>
+    <div class="project-list" id="projectList"></div>
+    <div class="rail-foot">
+      <div class="legend">
+        <h3 class="eyebrow">Tipos de cena</h3>
+        <ul>
+          <li><b class="m-chunk"></b>Chunk <small>1–2 palavras, troca seca</small></li>
+          <li><b class="m-stack"></b>Pilha <small>linhas com blur + ênfase</small></li>
+          <li><b class="m-solo"></b>Solo <small>palavra grande com pop</small></li>
+          <li><b class="m-card"></b>Card <small>fundo chapado, citação</small></li>
+        </ul>
+      </div>
+    </div>
+  </aside>
+
+  <!-- PALCO --------------------------------------------------------->
+  <section class="stage" id="stage">
+    <div class="drop" id="drop">
+      <div class="drop-inner">
+        <p class="drop-kicker">01 — comece aqui</p>
+        <h1 class="drop-title">Solte o vídeo<br><em>que vai ganhar legenda.</em></h1>
+        <p class="drop-sub">MP4, MOV, MKV ou WEBM. A transcrição começa sozinha, com palavras sincronizadas, e o motor decide ênfases, blur, agrupamentos e efeitos.</p>
+        <button class="btn btn-primary" id="btnPick">Escolher arquivo</button>
+        <div class="drop-opts">
+          <label>Modelo
+            <select id="uploadModel"></select>
+          </label>
+          <label>Estilo inicial
+            <select id="uploadPreset"></select>
+          </label>
+        </div>
+      </div>
+      <input type="file" id="fileInput" accept="video/*" hidden>
+    </div>
+
+    <div class="viewer" id="viewer" hidden>
+      <div class="phone-wrap">
+        <div class="glow" aria-hidden="true"></div>
+        <div class="phone" id="phone">
+          <img id="frame" alt="Prévia do quadro">
+          <video id="player" playsinline hidden></video>
+          <div class="busy" id="busy" hidden>
+            <div class="ring"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" class="ring-bg"/><circle cx="60" cy="60" r="52" class="ring-fg" id="ringFg"/></svg><span id="busyPct">0%</span></div>
+            <p class="busy-title" id="busyTitle">Transcrevendo…</p>
+            <p class="busy-sub" id="busySub"></p>
+          </div>
+          <div class="frame-loading" id="frameLoading"></div>
+        </div>
+      </div>
+
+      <div class="transport">
+        <button class="btn-round" id="btnPlay" title="Pré-visualizar em movimento (espaço)">
+          <svg viewBox="0 0 24 24" class="i-play"><path d="M8 5.5v13l11-6.5z"/></svg>
+          <svg viewBox="0 0 24 24" class="i-pause"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg>
+        </button>
+        <div class="tc"><span id="tcNow">00:00.00</span><span class="tc-sep">/</span><span id="tcDur">00:00.00</span></div>
+        <div class="preview-state" id="previewState"></div>
+        <div class="step-btns">
+          <button class="btn-ghost" id="btnPrev" title="Quadro anterior (←)">‹</button>
+          <button class="btn-ghost" id="btnNext" title="Próximo quadro (→)">›</button>
+        </div>
+      </div>
+
+      <div class="timeline" id="timeline">
+        <div class="tl-track" id="tlTrack"></div>
+        <div class="tl-flashes" id="tlFlashes"></div>
+        <div class="tl-head" id="tlHead"><span></span></div>
+        <input type="range" id="scrub" min="0" max="1" step="0.001" value="0" aria-label="Posição">
+      </div>
+      <div class="scene-now" id="sceneNow"></div>
+    </div>
+  </section>
+
+  <!-- INSPETOR ------------------------------------------------------>
+  <aside class="inspector" id="inspector">
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="texto" role="tab"><i>02</i>Texto</button>
+      <button class="tab" data-tab="estilo" role="tab"><i>03</i>Estilo</button>
+      <button class="tab" data-tab="exportar" role="tab"><i>04</i>Exportar</button>
+    </nav>
+
+    <!-- TEXTO -->
+    <section class="pane active" data-pane="texto">
+      <div class="pane-head">
+        <h2>Transcrição</h2>
+        <span class="save-state" id="saveState"></span>
+      </div>
+      <p class="hint">Corrija o texto à vontade ou cole o seu roteiro inteiro: ele é re-sincronizado com o áudio. Selecione palavras e use os botões para forçar um efeito.</p>
+      <div class="marks" id="marks">
+        <button data-mark="emph" title="Serifada itálica de ênfase"><em class="mk-serif">Aa</em>Ênfase</button>
+        <button data-mark="red" title="Destaque vermelho"><b class="mk-red">Aa</b>Vermelho</button>
+        <button data-mark="circle" title="Elipse desenhada"><b class="mk-circle">Aa</b>Elipse</button>
+        <button data-mark="underline" title="Sublinhado em traço"><b class="mk-under">Aa</b>Traço</button>
+        <button data-mark="box" title="Caixa vermelha"><b class="mk-box">Aa</b>Caixa</button>
+        <button data-mark="solo" title="Palavra solo com pop"><b class="mk-solo">Aa</b>Solo</button>
+        <button data-mark="break" title="Forçar nova cena"><b class="mk-break">|</b>Quebra</button>
+        <button data-mark="card" title="Trecho vira card (presets com cards)"><b class="mk-card">“”</b>Card</button>
+      </div>
+      <textarea id="text" spellcheck="false" placeholder="A transcrição aparece aqui…"></textarea>
+      <details class="syntax">
+        <summary>Sintaxe das marcações</summary>
+        <table>
+          <tr><td><code>*palavra*</code></td><td>ênfase serifada</td></tr>
+          <tr><td><code>!palavra!</code></td><td>vermelho</td></tr>
+          <tr><td><code>((palavra))</code></td><td>elipse</td></tr>
+          <tr><td><code>_palavra_</code></td><td>sublinhado</td></tr>
+          <tr><td><code>[palavra]</code></td><td>caixa vermelha</td></tr>
+          <tr><td><code>~palavra</code></td><td>solo com pop</td></tr>
+          <tr><td><code>|</code></td><td>quebra de cena</td></tr>
+          <tr><td><code>"…"</code></td><td>card de citação</td></tr>
+        </table>
+      </details>
+      <div class="retrans">
+        <select id="retransModel"></select>
+        <button class="btn btn-sm" id="btnRetrans">Transcrever de novo</button>
+      </div>
+    </section>
+
+    <!-- ESTILO -->
+    <section class="pane" data-pane="estilo">
+      <div class="pane-head">
+        <h2>Estilo</h2>
+        <button class="btn-link" id="btnResetStyle">Restaurar preset</button>
+      </div>
+      <div class="presets" id="presetGrid"></div>
+      <div id="controls" class="controls"></div>
+      <div class="save-preset">
+        <h3 class="eyebrow">Salvar como novo preset</h3>
+        <input id="newPresetName" placeholder="nome-do-preset" spellcheck="false">
+        <input id="newPresetDesc" placeholder="Descrição curta (opcional)">
+        <button class="btn btn-primary btn-block" id="btnSavePreset">Salvar preset</button>
+      </div>
+    </section>
+
+    <!-- EXPORTAR -->
+    <section class="pane" data-pane="exportar">
+      <div class="pane-head"><h2>Exportar</h2></div>
+      <div class="formats">
+        <label class="fmt">
+          <input type="radio" name="fmt" value="mp4" checked>
+          <span class="fmt-body"><b>Vídeo legendado</b><small>MP4 H.264, legenda gravada no vídeo, com áudio</small></span>
+        </label>
+        <label class="fmt">
+          <input type="radio" name="fmt" value="alpha">
+          <span class="fmt-body"><b>Só a legenda, transparente</b><small>MOV ProRes 4444 com alfa, para editar no Premiere, DaVinci ou CapCut</small></span>
+        </label>
+      </div>
+      <div class="field-row">
+        <label>Resolução
+          <select id="expRes">
+            <option value="original">Original</option>
+            <option value="1920">1080 × 1920</option>
+            <option value="1280">720 × 1280</option>
+          </select>
+        </label>
+        <label>Qualidade
+          <select id="expQ">
+            <option value="16">Máxima</option>
+            <option value="18" selected>Alta</option>
+            <option value="22">Leve</option>
+          </select>
+        </label>
+      </div>
+      <button class="btn btn-primary btn-block btn-lg" id="btnExport">Renderizar</button>
+      <div class="export-progress" id="expProg" hidden>
+        <div class="bar"><span id="expBar"></span></div>
+        <div class="exp-meta"><span id="expMsg"></span><button class="btn-link" id="btnCancel">cancelar</button></div>
+      </div>
+      <div class="exports" id="exports"></div>
+    </section>
+  </aside>
+</main>
+
+<div class="toast" id="toast" role="status"></div>
+<script src="/app.js"></script>
+</body>
+</html>

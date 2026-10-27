@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+
+# mídia e dados locais (pesados ou de terceiros)
+projects/
+projects_cli/
+out/
+ref/
+analysis/
+presets/_thumbs/
+
+*.mp4
+*.mov
+*.mkv
+*.webm

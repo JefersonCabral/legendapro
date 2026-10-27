@@ -1,0 +1,7 @@
+numpy
+opencv-python-headless
+pillow
+faster-whisper
+# GPU NVIDIA (opcional, acelera a transcrição):
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*

@@ -1,0 +1,123 @@
+{
+  "name": "desculpa",
+  "description": "Estilo do vídeo 2 ('essa é a sua desculpa favorita'): pilhas centralizadas que sobem conforme crescem, serifada vermelha viva piscando, caixa vermelha em negações, elipse verde desenhada à mão, sublinhado em traço e palavras solo com pop.",
+  "fonts": {
+    "sans": {
+      "file": "Poppins-SemiBold.ttf",
+      "tracking": -0.035
+    },
+    "sans_i": {
+      "file": "Poppins-BoldItalic.ttf",
+      "tracking": -0.03
+    },
+    "serif": {
+      "file": "PlayfairDisplay-Italic-VF.ttf",
+      "weight": 800,
+      "tracking": -0.02
+    },
+    "card": {
+      "file": "PlayfairDisplay-Italic-VF.ttf",
+      "weight": 400,
+      "tracking": -0.01
+    }
+  },
+  "layout": {
+    "anchor_y": 0.6,
+    "grow": "center",
+    "safe_width": 0.84,
+    "base_size": 0.072,
+    "small_scale": 0.82,
+    "serif_scale": 1.5,
+    "solo_scale": 1.62,
+    "line_gap": 0.1,
+    "serif_line_gap": -0.02,
+    "zigzag": 0.3,
+    "max_stack_lines": 5
+  },
+  "colors": {
+    "text": "#FFFFFF",
+    "red": "#DA000B",
+    "accent": "#49DC7B",
+    "card_bg": [
+      "#0AAB2A",
+      "#FFFFFF"
+    ],
+    "card_text": [
+      "#FFFFFF",
+      "#0AAB2A"
+    ]
+  },
+  "effects": {
+    "shadow": {
+      "opacity": 0.5,
+      "blur": 0.009,
+      "offset_y": 0.002
+    },
+    "glow_red": {
+      "opacity": 0.35,
+      "blur": 0.01
+    },
+    "blur_in": {
+      "duration": 0.26,
+      "max_blur": 0.017,
+      "scale_from": 1.05
+    },
+    "blur_out": {
+      "duration": 0.26,
+      "max_blur": 0.02,
+      "stagger": 0.05,
+      "overlap": false
+    },
+    "pop": {
+      "duration": 0.15,
+      "scale_from": 1.14,
+      "rise": 0.014
+    },
+    "cut": {
+      "duration": 0.1,
+      "scale_from": 1.04
+    },
+    "flicker": true,
+    "red_glow": false,
+    "drift": 0.0,
+    "flash": {
+      "enabled": true,
+      "duration": 0.26,
+      "min_interval": 8.0
+    },
+    "rolling_window": 2
+  },
+  "rules": {
+    "emphasis_threshold": 2.4,
+    "solo": {
+      "enabled": true,
+      "max_words": 4,
+      "min_pace": 0.26,
+      "probability": 0.6
+    },
+    "stack_plain_probability": 0.3,
+    "stack_min_words": 2,
+    "stack_max_words": 7,
+    "chunk_max_chars": 13,
+    "red_mode": "serif",
+    "box_negation": true,
+    "sans_italic_lead": true,
+    "ellipse": {
+      "probability": 0.8,
+      "cooldown": 9.0
+    },
+    "underline": {
+      "probability": 0.85,
+      "cooldown": 6.0
+    },
+    "cards": {
+      "enabled": false,
+      "auto_repetition": false
+    },
+    "max_hold": 0.7,
+    "emphasis_every": 3.4,
+    "emphasis_gap": 2.2,
+    "box_cooldown": 8.0,
+    "capitalize_stacks": true
+  }
+}

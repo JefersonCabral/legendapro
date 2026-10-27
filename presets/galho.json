@@ -1,0 +1,123 @@
+{
+  "name": "galho",
+  "description": "Estilo do vídeo 1 ('pulando de galho em galho'): sans branca enxuta, ênfases em serifada itálica gigante, pilhas em zigue-zague crescendo para baixo, vermelho escuro com brilho, cards de citação verdes e flash de luz.",
+  "fonts": {
+    "sans": {
+      "file": "Poppins-SemiBold.ttf",
+      "tracking": -0.035
+    },
+    "sans_i": {
+      "file": "Poppins-BoldItalic.ttf",
+      "tracking": -0.03
+    },
+    "serif": {
+      "file": "PlayfairDisplay-Italic-VF.ttf",
+      "weight": 700,
+      "tracking": -0.02
+    },
+    "card": {
+      "file": "PlayfairDisplay-Italic-VF.ttf",
+      "weight": 400,
+      "tracking": -0.01
+    }
+  },
+  "layout": {
+    "anchor_y": 0.675,
+    "grow": "down",
+    "safe_width": 0.84,
+    "base_size": 0.074,
+    "small_scale": 0.8,
+    "serif_scale": 1.95,
+    "solo_scale": 1.25,
+    "line_gap": 0.14,
+    "serif_line_gap": 0.04,
+    "zigzag": 0.55,
+    "max_stack_lines": 6
+  },
+  "colors": {
+    "text": "#FFFFFF",
+    "red": "#B00008",
+    "accent": "#49DC7B",
+    "card_bg": [
+      "#0AAB2A",
+      "#FFFFFF"
+    ],
+    "card_text": [
+      "#FFFFFF",
+      "#0AAB2A"
+    ]
+  },
+  "effects": {
+    "shadow": {
+      "opacity": 0.45,
+      "blur": 0.01,
+      "offset_y": 0.002
+    },
+    "glow_red": {
+      "opacity": 0.55,
+      "blur": 0.011
+    },
+    "blur_in": {
+      "duration": 0.27,
+      "max_blur": 0.016,
+      "scale_from": 1.06
+    },
+    "blur_out": {
+      "duration": 0.24,
+      "max_blur": 0.018,
+      "stagger": 0.03,
+      "overlap": true
+    },
+    "pop": {
+      "duration": 0.16,
+      "scale_from": 1.16,
+      "rise": 0.012
+    },
+    "cut": {
+      "duration": 0.1,
+      "scale_from": 1.04
+    },
+    "flicker": false,
+    "red_glow": true,
+    "drift": 0.006,
+    "flash": {
+      "enabled": true,
+      "duration": 0.2,
+      "min_interval": 9.0
+    },
+    "rolling_window": 0
+  },
+  "rules": {
+    "emphasis_threshold": 2.2,
+    "solo": {
+      "enabled": true,
+      "max_words": 4,
+      "min_pace": 0.3,
+      "probability": 0.35
+    },
+    "stack_plain_probability": 0.22,
+    "stack_min_words": 2,
+    "stack_max_words": 6,
+    "chunk_max_chars": 13,
+    "red_mode": "serif",
+    "box_negation": false,
+    "sans_italic_lead": false,
+    "ellipse": {
+      "probability": 0.0,
+      "cooldown": 8.0
+    },
+    "underline": {
+      "probability": 0.0,
+      "cooldown": 6.0
+    },
+    "cards": {
+      "enabled": true,
+      "auto_repetition": true
+    },
+    "max_hold": 0.7,
+    "emphasis_every": 3.2,
+    "emphasis_gap": 0.8,
+    "box_cooldown": 8.0,
+    "capitalize_stacks": true
+  }
+}

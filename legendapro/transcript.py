@@ -1,0 +1,249 @@
+"""Entrada de transcrição: Whisper, JSON de palavras, SRT/VTT ou texto livre com marcações.
+
+Marcações aceitas no texto (opcionais, o automático decide o resto):
+  *palavra*     força ênfase (serifada itálica)
+  !palavra!     força destaque vermelho
+  ((palavra))   elipse desenhada em volta
+  _palavra_     sublinhado em traço
+  [palavra]     caixa vermelha atrás
+  ~palavra      palavra solo com pop
+  |             força quebra de cena
+  "..."         trecho vira card de citação (presets com cards)
+  {card} ... {/card}  idem, explícito
+"""
+import json
+import re
+import unicodedata
+from dataclasses import dataclass, field, asdict
+from difflib import SequenceMatcher
+
+
+@dataclass
+class Word:
+    text: str
+    start: float
+    end: float
+    flags: set = field(default_factory=set)
+
+    @property
+    def norm(self):
+        return normalize(self.text)
+
+    def to_dict(self):
+        d = asdict(self)
+        d["flags"] = sorted(self.flags)
+        return d
+
+
+def normalize(s):
+    s = unicodedata.normalize("NFD", s.lower())
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    return re.sub(r"[^a-z0-9]", "", s)
+
+
+# ---------------------------------------------------------------- markup
+
+_MARKS = [
+    (re.compile(r"^\(\((.+)\)\)$"), "circle"),
+    (re.compile(r"^\*(.+)\*$"), "emph"),
+    (re.compile(r"^!(.+)!$"), "red"),
+    (re.compile(r"^_(.+)_$"), "underline"),
+    (re.compile(r"^\[(.+)\]$"), "box"),
+    (re.compile(r"^~(.+)$"), "solo"),
+]
+
+
+def parse_markup(text):
+    """Texto livre -> lista de (palavra, flags). Mantém pontuação colada na palavra."""
+    text = text.replace("{card}", " \x01 ").replace("{/card}", " \x02 ")
+    # aspas viram card
+    text = re.sub(r"[\"“”]", lambda m: " \x03 ", text)
+    out, in_card, quote_open = [], False, False
+    for raw in text.split():
+        if raw == "\x01":
+            in_card = True; continue
+        if raw == "\x02":
+            in_card = False; continue
+        if raw == "\x03":
+            quote_open = not quote_open; continue
+        if raw == "|":
+            if out:
+                out[-1][1].add("break")
+            continue
+        flags = set()
+        # pontuação externa às marcas (ex.: *tempo*.)
+        if raw.startswith("!") and raw.count("!") >= 2:
+            # !palavra! não pode ter o "!" final confundido com pontuação
+            m = re.match(r"^!(.+?)!([.,?;:…]*)$", raw)
+            if m:
+                raw = m.group(1) + m.group(2)
+                flags.add("red")
+        m = re.match(r"^(.*?)([.,!?;:…]*)$", raw)
+        core, tail = m.group(1), m.group(2)
+        changed = True
+        while changed and core:
+            changed = False
+            for rx, flag in _MARKS:
+                mm = rx.match(core)
+                if mm:
+                    core = mm.group(1); flags.add(flag); changed = True
+        # marca com pontuação dentro (ex.: *tempo.*)
+        if not core:
+            continue
+        if in_card or quote_open:
+            flags.add("card")
+        out.append([core + tail, flags])
+    return [(w, f) for w, f in out]
+
+
+# ---------------------------------------------------------------- loaders
+
+def from_json(path):
+    data = json.load(open(path, encoding="utf-8"))
+    items = data["words"] if isinstance(data, dict) else data
+    words = []
+    for it in items:
+        txt = it.get("text") or it.get("word") or ""
+        txt = txt.strip()
+        if not txt:
+            continue
+        pw = parse_markup(txt)
+        flags = set(it.get("flags", []))
+        for t, f in pw:
+            words.append(Word(t, float(it["start"]), float(it["end"]), flags | f))
+    return words
+
+
+def _ts(s):
+    s = s.strip().replace(",", ".")
+    parts = s.split(":")
+    v = 0.0
+    for p in parts:
+        v = v * 60 + float(p)
+    return v
+
+
+def from_srt(path):
+    raw = open(path, encoding="utf-8-sig").read()
+    blocks = re.split(r"\n\s*\n", raw.strip())
+    words = []
+    for b in blocks:
+        lines = [l for l in b.strip().splitlines() if l.strip()]
+        tl = next((i for i, l in enumerate(lines) if "-->" in l), None)
+        if tl is None:
+            continue
+        a, b2 = lines[tl].split("-->")
+        t0, t1 = _ts(a), _ts(b2.split()[0])
+        text = " ".join(lines[tl + 1:])
+        text = re.sub(r"<[^>]+>", "", text)
+        pw = parse_markup(text)
+        if not pw:
+            continue
+        # distribui o tempo pelo tamanho das palavras
+        weights = [max(len(normalize(w)), 1) + 1.5 for w, _ in pw]
+        tot = sum(weights)
+        t = t0
+        for (w, f), wt in zip(pw, weights):
+            d = (t1 - t0) * wt / tot
+            words.append(Word(w, t, t + d, f))
+            t += d
+    return words
+
+
+_MODELS = {}
+DEFAULT_MODEL = "large-v3-turbo"
+
+
+def get_model(name=DEFAULT_MODEL):
+    """Carrega (uma vez) o Whisper; usa a GPU quando houver, senão CPU."""
+    from .gpu import cuda_available
+    if name in _MODELS:
+        return _MODELS[name]
+    from faster_whisper import WhisperModel
+    m = None
+    if cuda_available():
+        try:
+            m = WhisperModel(name, device="cuda", compute_type="int8_float16")
+            m.device_name = "GPU"
+        except Exception:
+            m = None
+    if m is None:
+        m = WhisperModel(name, device="cpu", compute_type="int8")
+        m.device_name = "CPU"
+    _MODELS[name] = m
+    return m
+
+
+def transcribe(media, model=DEFAULT_MODEL, language="pt", progress=None):
+    """progress(fração 0..1) é chamado conforme os trechos são reconhecidos."""
+    m = get_model(model)
+    try:
+        segs, info = m.transcribe(media, language=language, word_timestamps=True, vad_filter=True)
+        words = []
+        for s in segs:
+            for w in s.words:
+                t = w.word.strip()
+                if t:
+                    words.append(Word(t, float(w.start), float(w.end)))
+            if progress and info.duration:
+                progress(min(1.0, s.end / info.duration))
+    except RuntimeError:
+        if getattr(m, "device_name", "") != "GPU":
+            raise
+        # falha de CUDA em tempo de execução: refaz na CPU
+        _MODELS.pop(model, None)
+        from faster_whisper import WhisperModel
+        cpu = WhisperModel(model, device="cpu", compute_type="int8")
+        cpu.device_name = "CPU"
+        _MODELS[model] = cpu
+        return transcribe(media, model, language, progress)
+    return words
+
+
+def align_text(text, timed):
+    """Usa o texto do usuário (grafia + marcações) e os tempos do Whisper."""
+    user = parse_markup(text)
+    a = [normalize(w) for w, _ in user]
+    b = [w.norm for w in timed]
+    sm = SequenceMatcher(None, a, b, autojunk=False)
+    times = [None] * len(user)
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            for k in range(i2 - i1):
+                times[i1 + k] = (timed[j1 + k].start, timed[j1 + k].end)
+        elif tag == "replace" and j2 > j1:
+            t0, t1 = timed[j1].start, timed[j2 - 1].end
+            n = i2 - i1
+            for k in range(n):
+                times[i1 + k] = (t0 + (t1 - t0) * k / n, t0 + (t1 - t0) * (k + 1) / n)
+    # interpola o que sobrou
+    for i in range(len(times)):
+        if times[i] is None:
+            prev = next((times[j][1] for j in range(i - 1, -1, -1) if times[j]), 0.0)
+            nxt_i = next((j for j in range(i + 1, len(times)) if times[j]), None)
+            nxt = times[nxt_i][0] if nxt_i is not None else prev + 0.4 * (len(times) - i)
+            span = [j for j in range(i, nxt_i if nxt_i is not None else len(times))]
+            n = len(span)
+            for k, j in enumerate(span):
+                times[j] = (prev + (nxt - prev) * k / n, prev + (nxt - prev) * (k + 1) / n)
+    return [Word(w, t[0], t[1], f) for (w, f), t in zip(user, times)]
+
+
+def load(source=None, media=None, model=DEFAULT_MODEL):
+    """source: .json/.srt/.vtt/.txt ou None (transcreve media)."""
+    if source is None:
+        return transcribe(media, model)
+    low = source.lower()
+    if low.endswith(".json"):
+        return from_json(source)
+    if low.endswith(".srt") or low.endswith(".vtt"):
+        return from_srt(source)
+    text = open(source, encoding="utf-8").read()
+    if media is None:
+        raise SystemExit("Texto puro precisa do vídeo para sincronizar (--video).")
+    return align_text(text, transcribe(media, model))
+
+
+def save_json(words, path):
+    json.dump({"words": [w.to_dict() for w in words]}, open(path, "w", encoding="utf-8"),
+              ensure_ascii=False, indent=1)
