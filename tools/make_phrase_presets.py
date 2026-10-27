@@ -216,6 +216,139 @@ PRESETS += [
                  "caixa escura com texto branco.", True),
 ]
 
+
+# Referência v8: texto rosa em modo DIFERENÇA com o vídeo (analysis/v8/REPORT.md)
+_fig = {"file": "Figtree-VF.ttf", "axes": {"wght": 800}, "tracking": -0.11, "space_scale": 0.5}
+_fade_line = {"type": "fade", "reveal": "line", "duration": 0.30, "fade": 0.30, "fade_ease": "out_quad", "dist": 0.0}
+PRESETS.append({
+    "name": "preset-9", "title": "Preset 9",
+    "description": "Referência v8: grotesca pesadíssima (Figtree ExtraBold) com letras coladas, texto rosa em modo "
+                   "DIFERENÇA com o vídeo (rosa no escuro, verde-petróleo no claro, a textura do vídeo aparece "
+                   "invertida dentro da letra); palavra negativa em vermelho ainda maior; cada linha entra com fade "
+                   "de 0,3 s e o bloco sai seco.",
+    "fonts": {"sans": dict(_fig), "hero": dict(_fig), "italic": dict(_fig), "serif": dict(_fig)},
+    "layout": {"anchor_mode": "center", "anchor_y": 0.665, "plain_anchor_y": 0.665, "safe_width": 0.92,
+               "base_size": 0.19, "support_scale": 1.0, "hero_scale": 1.8, "hero_max_width": 0.90,
+               "red_scale": 1.3, "serif_scale": 1.0,
+               "above_align": "left", "above_indent": 0.02, "below_align": "left", "below_indent": 0.0,
+               "indent_fit": 1.0, "gap_above": 0.075, "gap_below": 0.026},
+    "colors": {"text": "#FFC3C4", "hero": "#FFC3C4", "red": "#FF1B38", "accent": "#FFC3C4"},
+    "effects": {
+        "blend": {"enabled": True, "mode": "difference", "opacity": 1.0},
+        "shadow": {"opacity": 0.0, "blur": 0.005, "offset_y": 0.0},
+        "gradient": dict(GRAD_OFF, top=0.55, opacity=0.4, curve=1.6),
+        "glow": {},
+        "anim": {"plain": dict(_fade_line), "support": dict(_fade_line), "hero": dict(_fade_line),
+                 "serif": dict(_fade_line)},
+        "exit": {"type": "cut"},
+        "lead": 0.05,
+    },
+    "rules": base_rules(case="keep", strip_punct=",;:.!?…", phrase_max_words=5, support_max_words=3,
+                        support_max_chars=16, chunk_max_words=3, chunk_max_chars=16, chunk_pause=0.25,
+                        emphasis_threshold=2.0, emphasis_every=1.6, emphasis_gap=0.8, red_auto=True,
+                        max_hold=2.0),
+})
+
+
+# Referência v9: caixa no topo que se preenche (analysis/v9/REPORT.md)
+_small = {"type": "slide", "reveal": "word", "duration": 0.34, "ease": "linear", "fade_with_motion": True,
+          "opacity_from": 0.0, "from": "left", "dist": 0.044, "until": "word_end"}
+_key = {"type": "rise", "reveal": "word", "duration": 0.26, "ease": "linear", "fade_with_motion": True,
+        "opacity_from": 0.0, "from": "below", "dist": 0.0174, "until": "word_end"}
+PRESETS.append({
+    "name": "preset-10", "title": "Preset 10",
+    "description": "Referência v9 (podcast): legenda no topo numa caixa estreita; Inicial Maiúscula Em Toda Palavra; "
+                   "a linha com palavra-chave cresce até preencher a caixa (palavra-chave em Inter Bold Italic, "
+                   "misturada com o vídeo em diferença; as pequenas ficam 1,85× menores na mesma linha); palavras "
+                   "pequenas deslizam da esquerda, a chave sobe de baixo; linhas curtas em zigue-zague.",
+    "fonts": {
+        "sans": {"file": "Inter-VF.ttf", "axes": {"opsz": 18, "wght": 420}, "tracking": -0.10, "space_scale": 0.25},
+        "hero": {"file": "Inter-Italic-VF.ttf", "axes": {"opsz": 18, "wght": 700}, "tracking": -0.075, "space_scale": 0.25},
+        "serif": {"file": "Inter-Italic-VF.ttf", "axes": {"opsz": 18, "wght": 700}, "tracking": -0.075},
+    },
+    # a referência usa o topo (0,161 H); aqui começa embaixo e o usuário move para onde quiser
+    "layout": {"anchor_mode": "center", "anchor_y": 0.72, "safe_width": 0.41, "base_size": 0.0675,
+               "hero_scale": 1.85, "hero_ratio": 1.85, "hero_max_size": 0.12, "serif_scale": 1.85,
+               "gap_lines": 0.011, "gap_above": 0.016, "hero_line_gap": 0.94, "stagger_indent": 0.025},
+    "colors": {"text": "#FFFFFF", "hero": "#FFFFFF", "red": "#FF3B30", "accent": "#FFFFFF"},
+    "effects": {
+        "shadow": {"opacity": 0.8, "blur": 0.011, "offset_y": 0.0},
+        "blend": {"enabled": True, "mode": "difference", "opacity": 1.0, "roles": ["hero"]},
+        "gradient": dict(GRAD_OFF),
+        "glow": {},
+        "anim": {"plain": dict(_small), "support": dict(_small), "hero": dict(_key), "serif": dict(_key)},
+        "exit": {"type": "cut"},
+        "lead": 0.0,
+    },
+    "rules": base_rules(layout_engine="fill", case="title", strip_punct=",;", emphasis_threshold=1.9,
+                        emphasis_every=1.3, emphasis_gap=0.7, block_max_words=7, block_max_dur=2.4,
+                        block_pause=0.8, max_lines=2, support_max_words=4, support_max_chars=16,
+                        hero_lead_words=3, hero_tail_words=1, max_heroes_per_block=2, phrase_max_words=9,
+                        intro_alone=["sim", "olha", "veja", "então", "e", "mas", "ou seja"], max_hold=0.15),
+})
+
+
+# Referência v10: palavra grande que desliza o bloco inteiro (analysis/v10/REPORT.md)
+_light = {"type": "fade", "reveal": "word", "duration": 0.42, "fade": 0.42, "fade_ease": "linear",
+          "opacity_from": 0.0, "dist": 0.0}
+_glide = {"type": "rise", "reveal": "word", "duration": "scene", "ease": "out_exp", "ease_k": 3.8,
+          "fade": 0.8, "fade_ease": "out_pow", "fade_pow": 1.5, "opacity_from": 0.15,
+          "from": ["below", "left", "below", "above", "left"], "dist": 0.13,
+          "dist_by_from": {"below": 0.13, "above": 0.07, "left": 0.03, "right": 0.03, "none": 0.0},
+          "motion_blur": 1.0}
+PRESETS.append({
+    "name": "preset-11", "title": "Preset 11",
+    "description": "Referência v10 (entrevista): Inter fina e elegante; a palavra de destaque nasce translúcida e "
+                   "desliza com desaceleração exponencial durante o bloco inteiro (como o 'estatisticamente'), "
+                   "alternando a direção (de baixo, da esquerda, de cima); embaixo dela a frase acende palavra a "
+                   "palavra no tempo da fala; números contam até o valor; troca seca de bloco.",
+    "fonts": {
+        "sans": {"file": "Inter-VF.ttf", "axes": {"opsz": 32, "wght": 370}, "tracking": -0.05},
+        "hero": {"file": "Inter-VF.ttf", "axes": {"opsz": 32, "wght": 330}, "tracking": -0.06},
+        "serif": {"file": "Inter-VF.ttf", "axes": {"opsz": 32, "wght": 330}, "tracking": -0.06},
+    },
+    "layout": {"anchor_mode": "baseline", "anchor_y": 0.62, "safe_width": 0.80, "base_size": 0.055,
+               "support_scale": 0.78, "hero_scale": 1.75, "hero_max_width": 0.50, "serif_scale": 1.75,
+               "above_align": "left", "above_indent": 0.0, "below_align": "center", "below_indent": 0.0,
+               "indent_fit": 1.0, "gap_above": 0.012, "gap_below": 0.016},
+    "colors": {"text": "#FEFBF7", "hero": "#FEFBF7", "red": "#FF4A3D", "accent": "#FEFBF7"},
+    "effects": {
+        "shadow": {"opacity": 0.0, "blur": 0.005, "offset_y": 0.0},
+        "gradient": dict(GRAD_OFF),
+        "glow": {},
+        "anim": {"plain": dict(_light), "support": dict(_light), "hero": dict(_glide), "serif": dict(_glide)},
+        "count_up": {"enabled": True, "rate": 12.0, "max_duration": 0.7},
+        "exit": {"type": "cut"},
+        "lead": 0.0,
+    },
+    "rules": base_rules(case="keep", strip_punct="", emphasis_threshold=2.0, emphasis_every=3.5,
+                        emphasis_gap=2.0, phrase_max_words=7, support_max_words=8, support_max_chars=42,
+                        chunk_max_words=4, chunk_max_chars=24, max_hold=3.0, hero_absorb_after=True, min_word_time=0.55, min_scene_time=0.55,
+                        block_max_dur=3.6),
+})
+
+# o que cada botão do menu da palavra faz em cada estilo (mostrado na interface)
+_common = {"red": "palavra na cor de destaque vermelha", "circle": "elipse desenhada em volta",
+           "underline": "traço desenhado embaixo da linha", "box": "caixa chapada atrás da linha",
+           "break": "começa um bloco novo depois desta palavra", "color": "cor só desta palavra"}
+EFFECT_NOTES = {
+    "preset-3": {"destaque": "palavra branca enorme com halo de luz, subindo"},
+    "preset-4": {"destaque": "palavra amarelo-limão enorme com brilho, subindo com borrão de movimento"},
+    "preset-5": {"destaque": "palavra 1,6× maior (o 'zoom' da referência)"},
+    "preset-6": {"destaque": "palavra amarela com degradê, halo e raios de luz atravessando"},
+    "preset-7": {"destaque": "linha em negrito grande no bloco empilhado",
+                 "box": "caixa revelada por cortina (como o 'in 30 seconds')"},
+    "preset-8": {"destaque": "linha em negrito grande no bloco empilhado",
+                 "box": "caixa escura revelada por cortina"},
+    "preset-9": {"destaque": "palavra 1,8× maior, misturada com o vídeo em diferença",
+                 "red": "vermelho ainda maior (como o 'Fail')"},
+    "preset-10": {"destaque": "palavra em negrito itálico que cresce até preencher a linha (modo diferença)"},
+    "preset-11": {"destaque": "palavra grande e fina que desliza devagar durante o bloco inteiro (como o "
+                              "'estatisticamente'); números contam até o valor"},
+}
+for p in PRESETS:
+    p["effect_notes"] = dict(_common, **EFFECT_NOTES.get(p["name"], {}))
+
 for p in PRESETS:
     path = os.path.join(ROOT, "presets", p["name"] + ".json")
     with open(path, "w", encoding="utf-8", newline="\n") as f:

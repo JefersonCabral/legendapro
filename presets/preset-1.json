@@ -128,5 +128,15 @@
     "emphasis_gap": 0.8,
     "box_cooldown": 8.0,
     "capitalize_stacks": true
+  },
+  "effect_notes": {
+    "destaque": "serifada itálica grande na pilha",
+    "red": "vermelho escuro com brilho",
+    "circle": "elipse verde desenhada à mão",
+    "underline": "sublinhado em traço",
+    "box": "caixa vermelha atrás da palavra",
+    "solo": "palavra sozinha, grande, com pop",
+    "break": "começa uma cena nova depois desta palavra",
+    "color": "cor só desta palavra"
   }
 }

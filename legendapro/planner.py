@@ -359,6 +359,8 @@ class Planner:
             t = t.lower()
         elif case == "upper":
             t = t.upper()
+        elif case == "title":   # Inicial Maiúscula Em Toda Palavra (mantém aspas/pontuação na frente)
+            t = re.sub(r"^([^\w]*)(\w)", lambda m: m.group(1) + m.group(2).upper(), t)
         return t
 
     def ptok(self, w, kind):
@@ -370,7 +372,10 @@ class Planner:
         color = None
         fx = []
         if kind == "hero":
-            color = col["red"] if "red" in w.flags else col.get("hero", col["text"])
+            red = "red" in w.flags or (self.rules.get("red_auto") and L.is_red(w.text))
+            color = col["red"] if red else col.get("hero", col["text"])
+            if red:
+                scale *= lay.get("red_scale", 1.0)
             fx.append("glow")
         elif "red" in w.flags:
             color = col["red"]
@@ -401,6 +406,11 @@ class Planner:
             cur.append(i)
         if cur:
             out.append(cur)
+        # palavra de ligação pendurada no fim do bloco ("ela insistiu e eu | testei") vai para o
+        # começo do próximo: senão ela aparece no último instante e some no corte
+        for k in range(len(out) - 1):
+            while len(out[k]) > 1 and L.is_stop(words[out[k][-1]].text) and not L.ends_clause(words[out[k][-1]].text)                     and len(out[k + 1]) < mw:
+                out[k + 1].insert(0, out[k].pop())
         return out
 
     def phrase_scene(self, words, mode, lines):
@@ -411,12 +421,16 @@ class Planner:
         out_lines, idx = [], []
         for lk, toks in lines:
             tl = []
+            line_t0 = max(t0, words[toks[0][0]].start - fx.get("lead", 0.02))
             for i, kind in toks:
                 t = self.ptok(words[i], kind)
                 # revelação palavra a palavra (no tempo da fala) ou o bloco inteiro de uma vez
                 # o papel de animação (t["anim"]) e não o tipo da linha: itálico anima como apoio
-                if anim.get(t["anim"], {}).get("reveal", "scene") == "word":
+                reveal = anim.get(t["anim"], {}).get("reveal", "scene")
+                if reveal == "word":
                     t["t_in"] = round(max(t0, words[i].start - fx.get("lead", 0.02)), 3)
+                elif reveal == "line":
+                    t["t_in"] = round(line_t0, 3)
                 else:
                     t["t_in"] = round(t0, 3)
                 tl.append(t)
@@ -429,6 +443,9 @@ class Planner:
                 for t in tl:
                     t["size"] = round(size, 5)
             out_lines.append({"tokens": tl, "kind": lk, "dx": 0.0})
+        for ln in out_lines:
+            if any("box" in words[t["wi"]].flags for t in ln["tokens"]):
+                ln["box"] = True
         sc = {"mode": mode, "t_in": round(t0, 3), "exit": fx.get("exit", {}).get("type", "cut"),
               "lines": out_lines, "decos": [], "words": idx}
         # elipse / sublinhado marcados à mão continuam valendo
@@ -442,6 +459,70 @@ class Planner:
                     sc["decos"].append({"kind": "underline", "line": li, "token": None,
                                         "t": round(t["t_in"] + 0.12, 3), "color": t["color"]})
         return sc
+
+    def readable(self, scenes):
+        """Cada palavra fica pelo menos min_word_time na tela: em fala rápida ela entra um pouco
+        antes (junto com as anteriores) em vez de aparecer no último instante da cena."""
+        for sc in scenes:
+            lim = sc["t_out"] - self.rules.get("min_word_time", 0.3)
+            for ln in sc["lines"]:
+                for t in ln["tokens"]:
+                    if t["t_in"] > lim:
+                        t["t_in"] = round(max(sc["t_in"], lim), 3)
+                    if "t_end" in t:
+                        t["t_end"] = round(max(t["t_end"], t["t_in"] + 0.05), 3)
+
+    def merge_short(self, scenes):
+        """Bloco curto demais para ler (fala rápida: um "né" de 0,15 s) entra no bloco anterior
+        (ou no seguinte, se for o primeiro): a palavra continua no tempo dela, mas dá para ler."""
+        min_s = self.rules.get("min_scene_time", 0.3)
+        k = 0
+        while k < len(scenes):
+            sc = scenes[k]
+            short = sc["mode"] == "plain" and sc["t_out"] - sc["t_in"] < min_s and len(scenes) > 1
+            prev = scenes[k - 1] if k > 0 and scenes[k - 1]["mode"] in ("plain", "hero") else None
+            nxt = scenes[k + 1] if k + 1 < len(scenes) and scenes[k + 1]["mode"] in ("plain", "hero") else None
+            if not short or (prev is None and nxt is None):
+                k += 1
+                continue
+            toks = [t for ln in sc["lines"] for t in ln["tokens"]]
+            W_ = self._words
+            prev_last = W_[[t for ln in prev["lines"] for t in ln["tokens"]][-1]["wi"]] if prev is not None else None
+            if prev is not None and "break" in prev_last.flags:
+                prev = None                     # o usuário quebrou ali de propósito
+            elif prev is not None and nxt is not None and L.ends_sentence(prev_last.text):
+                prev = None                     # frase nova: junta com o que vem depois, não com a anterior
+            if nxt is not None and "break" in W_[toks[-1]["wi"]].flags:
+                nxt = None
+            if prev is None and nxt is None:
+                k += 1
+                continue
+            if prev is not None:
+                last = prev["lines"][-1]
+                if prev["mode"] == "plain" or last["kind"] == "below":
+                    li = len(prev["lines"]) - 1
+                    last["tokens"] += toks
+                else:
+                    prev["lines"].append({"tokens": toks, "kind": "below", "dx": 0.0})
+                    li = len(prev["lines"]) - 1
+                for d in sc["decos"]:
+                    prev["decos"].append(dict(d, line=li, token=None if d["token"] is None else d["token"] + len(prev["lines"][li]["tokens"]) - len(toks)))
+                prev["t_out"] = max(prev["t_out"], sc["t_out"])
+            else:
+                first = nxt["lines"][0]
+                if nxt["mode"] == "plain" or first["kind"] == "above":
+                    for d in nxt["decos"]:
+                        if d["line"] == 0 and d["token"] is not None:
+                            d["token"] += len(toks)
+                    first["tokens"][:0] = toks
+                else:
+                    nxt["lines"].insert(0, {"tokens": toks, "kind": "above", "dx": 0.0})
+                    for d in nxt["decos"]:
+                        d["line"] += 1
+                nxt["decos"] += [dict(d, line=0) for d in sc["decos"]]
+                nxt["t_in"] = min(nxt["t_in"], sc["t_in"])
+            scenes.pop(k)
+        return scenes
 
     def plan_phrase(self, words):
         rules = self.rules
@@ -459,11 +540,26 @@ class Planner:
             for g in self.plain_groups(words, idx):
                 scenes.append(self.phrase_scene(words, "plain", [("plain", [(i, "plain") for i in g])]))
 
+        skip = set()
         for u, (si, ci, cl, _) in enumerate(units):
+            if u in skip:
+                continue
             e = emph.get(u)
             if e is None:
                 plain(cl)
                 continue
+            # o destaque puxa para a linha de baixo as orações seguintes da mesma frase (sem destaque
+            # próprio) enquanto couberem: "estatisticamente / é mais fácil, por incrível que pareça,"
+            if rules.get("hero_absorb_after"):
+                v = u + 1
+                while v < len(units) and units[v][0] == si and v not in emph:
+                    tail_now = cl[cl.index(e) + 1:] + units[v][2]
+                    if len(tail_now) > ms or sum(len(words[j].text) + 1 for j in tail_now) > mc \
+                            or words[units[v][2][-1]].end - words[cl[0]].start > rules.get("block_max_dur", 3.5):
+                        break
+                    cl = cl + units[v][2]
+                    skip.add(v)
+                    v += 1
             k = cl.index(e)
             hero = [e]
             # número + unidade viram um herói só ("$40 trillion", "10 mil")
@@ -496,6 +592,16 @@ class Planner:
             plain(tail)
 
         self.timing(scenes, words)
+        self._words = words
+        self.merge_short(scenes)
+        self.readable(scenes)
+        n = 0
+        for sc in scenes:
+            for ln in sc["lines"]:
+                for t in ln["tokens"]:
+                    if t.get("anim") == "hero":
+                        t["hero_n"] = n
+                        n += 1
         for sc in scenes:
             sc.pop("words", None)
         return {"preset": self.p["name"], "scenes": scenes, "flashes": []}
@@ -590,8 +696,14 @@ class Planner:
                 lines[-1] = ("hero_italic", lines[-1][1])
             # blocos com linhas demais viram dois
             ml = rules.get("max_lines", 4)
-            for g in range(0, len(lines), ml):
-                scenes.append(self.block_scene(words, lines[g:g + ml], bi == 0))
+            g = 0
+            while g < len(lines):
+                end = min(g + ml, len(lines))
+                # não fecha o bloco numa linha que termina em "da", "e", "mais"…: ela vai junto com a próxima
+                if end < len(lines) and end - g > 1 and L.is_stop(words[lines[end - 1][1][-1]].text):
+                    end -= 1
+                scenes.append(self.block_scene(words, lines[g:end], bi == 0))
+                g = end
         self.timing(scenes, words)
         for sc in scenes:
             sc.pop("words", None)
@@ -614,9 +726,142 @@ class Planner:
             last["box"] = True
         return sc
 
+    # caixa que se preenche (rules.layout_engine = "fill") ------------------------
+    # Blocos curtos de até 2 linhas numa caixa de largura fixa; a linha com palavra-chave é
+    # escalada até preencher a caixa (pequenas = herói / hero_ratio, mesma linha de base).
+    def plan_fill(self, words):
+        rules = self.rules
+        bw, bd = rules.get("block_max_words", 7), rules.get("block_max_dur", 2.0)
+        thr = rules.get("emphasis_threshold", 2.4)
+
+        # blocos: as orações enchem a caixa; quando não cabe, quebra na fronteira da oração;
+        # oração longa demais é dividida em partes iguais (nunca sobra uma palavra sozinha)
+        blocks = []
+        for sent in split_sentences(words, gap=rules.get("block_pause", 0.5)):
+            cur = []
+            for cl in split_clauses(words, sent, max_len=99):
+                for part in split_forced(words, cl):
+                    n = -(-len(part) // bw)
+                    pieces = [part[round(k * len(part) / n):round((k + 1) * len(part) / n)] for k in range(n)]
+                    for pc in pieces:
+                        fits = len(cur) + len(pc) <= bw and (not cur or words[pc[-1]].end - words[cur[0]].start <= bd)
+                        if cur and not fits:
+                            blocks.append(cur); cur = []
+                        cur += pc
+            if cur:
+                blocks.append(cur)
+
+        for k in range(len(blocks) - 1):
+            while len(blocks[k]) > 1 and L.is_stop(words[blocks[k][-1]].text) \
+                    and not L.ends_clause(words[blocks[k][-1]].text) and len(blocks[k + 1]) < bw:
+                blocks[k + 1].insert(0, blocks[k].pop())
+        # caixa curta demais para ler ("Por Que" em 0,18 s) junta com a seguinte (ou a anterior)
+        min_s = rules.get("min_scene_time", 0.3)
+        k = 0
+        while k < len(blocks) and len(blocks) > 1:
+            b = blocks[k]
+            nxt_start = words[blocks[k + 1][0]].start if k + 1 < len(blocks) else None
+            dur = (nxt_start if nxt_start is not None else words[b[-1]].end) - words[b[0]].start
+            if dur >= min_s or "break" in words[b[-1]].flags:
+                k += 1
+                continue
+            if k + 1 < len(blocks):
+                blocks[k + 1][:0] = b
+            else:
+                blocks[k - 1] += b
+            blocks.pop(k)
+        scenes = []
+        for block in blocks:
+            for sub in self.fill_split(words, block):
+                scenes.append(self.fill_scene(words, sub, thr))
+        # a última palavra de cada caixa termina de entrar um pouco antes da troca (aparece inteira)
+        for a, b in zip(scenes, scenes[1:]):
+            last = [t for ln in a["lines"] for t in ln["tokens"]][-1]
+            last["t_end"] = round(max(last["t_in"] + 0.05, min(last["t_end"], b["t_in"] - 0.1)), 3)
+        self.timing(scenes, words)
+        for sc in scenes:
+            sc.pop("words", None)
+        return {"preset": self.p["name"], "scenes": scenes, "flashes": []}
+
+    def fill_heroes(self, words, block, thr):
+        """Palavras-chave do bloco: as marcadas à mão; senão a mais forte (se passar do limiar) e
+        uma segunda só se também for forte. {-} desliga."""
+        forced = [i for i in block if "emph" in words[i].flags]
+        if forced:
+            return forced[:self.rules.get("max_heroes_per_block", 2)]
+        cand = sorted(((L.score(words, i), i) for i in block if "noemph" not in words[i].flags), reverse=True)
+        out = [i for sc_, i in cand[:1] if sc_ >= thr]
+        out += [i for sc_, i in cand[1:2] if sc_ >= self.rules.get("second_hero_min", thr + 1.0)
+                and out and abs(block.index(i) - block.index(out[0])) > 1]
+        return sorted(out, key=block.index)
+
+    def fill_lines(self, words, block, heroes):
+        rules = self.rules
+        lead_n, tail_n = rules.get("hero_lead_words", 3), rules.get("hero_tail_words", 1)
+        intro = {normalize(x) for x in rules.get("intro_alone", [])}
+        sw, mc = rules.get("support_max_words", 4), rules.get("support_max_chars", 16)
+        groups = []
+        for h in heroes:
+            k = block.index(h)
+            a = k
+            while a > 0 and k - a < lead_n and L.is_stop(words[block[a - 1]].text) \
+                    and not any(a - 1 <= g[1] for g in groups) and not L.ends_clause(words[block[a - 1]].text):
+                a -= 1
+            b = k
+            nxt = block[b + 1] if b + 1 < len(block) else None
+            if nxt is not None and nxt not in heroes and not L.ends_clause(words[h].text) and (
+                    (words[nxt].text[:1].isupper() and words[h].text[:1].isupper())
+                    or (tail_n and len(words[nxt].norm) <= 4)):
+                b += 1
+            groups.append((a, b))
+        lines, k = [], 0
+
+        def plain_run(run):
+            if not run:
+                return
+            if len(run) > 1 and words[run[0]].norm in intro:   # "Sim", "Olha", "Então" sozinhos
+                lines.append(("support", [run[0]]))
+                run = run[1:]
+            n = max(-(-len(run) // sw), -(-sum(len(words[i].text) + 1 for i in run) // (mc + 1)))
+            for j in range(n):                                    # linhas equilibradas
+                ln = run[round(j * len(run) / n):round((j + 1) * len(run) / n)]
+                if ln:
+                    lines.append(("support", ln))
+
+        for a, b in groups:
+            plain_run(block[k:a])
+            lines.append(("hero", block[a:b + 1]))
+            k = b + 1
+        plain_run(block[k:])
+        return lines
+
+    def fill_split(self, words, block):
+        """Bloco que daria mais de max_lines linhas é dividido ao meio (e de novo, se preciso)."""
+        thr = self.rules.get("emphasis_threshold", 2.4)
+        lines = self.fill_lines(words, block, self.fill_heroes(words, block, thr))
+        if len(lines) <= self.rules.get("max_lines", 2) or len(block) < 2:
+            return [block]
+        # corta onde as duas partes ficam mais tempo na tela (nunca sobra um "por que" de 0,18 s)
+        dur = lambda b: words[b[-1]].end - words[b[0]].start
+        h = max(range(1, len(block)), key=lambda h: (min(dur(block[:h]), dur(block[h:])), -abs(h - len(block) / 2)))
+        return self.fill_split(words, block[:h]) + self.fill_split(words, block[h:])
+
+    def fill_scene(self, words, block, thr):
+        heroes = self.fill_heroes(words, block, thr)
+        lines = self.fill_lines(words, block, heroes)
+        spec = [(lk, [(i, "hero" if i in heroes else "support") for i in idx]) for lk, idx in lines]
+        sc = self.phrase_scene(words, "fill", spec)
+        toks = [t for ln in sc["lines"] for t in ln["tokens"]]
+        for j, t in enumerate(toks):   # "snap": a palavra completa quando a próxima começa
+            t["t_end"] = round(min(words[t["wi"]].end, toks[j + 1]["t_in"]) if j + 1 < len(toks)
+                               else words[t["wi"]].end, 3)
+        return sc
+
     def plan(self, words):
         rules = self.rules
         self._wid = {id(w): i for i, w in enumerate(words)}
+        if rules.get("engine") == "phrase" and rules.get("layout_engine") == "fill":
+            return self.plan_fill(words)
         if rules.get("engine") == "phrase" and rules.get("layout_engine") == "stack":
             return self.plan_blocks(words)
         if rules.get("engine") == "phrase":
@@ -772,6 +1017,7 @@ class Planner:
             else:
                 t_out = min(nxt, last_end + hold) if nxt is not None else last_end + hold
             sc["t_out"] = round(max(t_out, sc["t_in"] + 0.15), 3)
+            self.readable([sc])
             # rolagem: linhas antigas saem quando a linha k+janela entra
             if sc.get("roll"):
                 r = sc["roll"]

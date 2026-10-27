@@ -194,7 +194,11 @@ def preset_thumb(name):
         bg = (np.array([34, 30, 28]) * (1 - yy) + np.array([12, 11, 10]) * yy).astype(np.uint8)
     bg = np.repeat(bg, W, axis=1)
     R = Renderer(style, plan, W, H)
-    img = R.frame(1.9, bg)
+    # no fim da frase de exemplo, mas antes de a última cena sair (presets que somem logo após a fala)
+    t = min(1.9, max(sc["t_out"] for sc in plan["scenes"]) - 0.02) if plan["scenes"] else 1.9
+    if any(a.get("duration") == "scene" for a in style["effects"].get("anim", {}).values()) and plan["scenes"]:
+        t = max(sc["t_out"] for sc in plan["scenes"]) - 0.03   # destaque que desliza o bloco todo: já assentado
+    img = R.frame(t, bg)
     # recorta perto do texto para a miniatura ficar legível
     import cv2
     ink = np.where((img.astype(int) - bg.astype(int)).max(axis=2) > 40)
@@ -209,6 +213,59 @@ def preset_thumb(name):
     img = img[max(0, cy - hh):cy + hh, max(0, cx - hw):cx + hw]
     img = cv2.resize(img, (340, 380), interpolation=cv2.INTER_AREA)
     data = jpeg(img, 90)
+    open(out, "wb").write(data)
+    return data
+
+
+# ---------------------------------------------------------------- prévia dos efeitos por preset
+
+FX_MARKS = {"destaque": {"emph"}, "red": {"red"}, "circle": {"circle"}, "underline": {"underline"},
+            "box": {"box"}, "solo": {"solo"}}
+
+
+def preset_fx_icon(name, mark):
+    """Ícone do botão de efeito desenhado pelo próprio motor do preset (a palavra "Aa" com o efeito,
+    do jeito que vai sair no vídeo). Fica em cache até o preset mudar."""
+    import cv2
+    name = presets.resolve(name)
+    cache_dir = os.path.join(PRESET_DIR, "_thumbs")
+    os.makedirs(cache_dir, exist_ok=True)
+    p = os.path.join(PRESET_DIR, name + ".json")
+    out = os.path.join(cache_dir, f"fx_{name}_{mark}.png")
+    if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(p):
+        return open(out, "rb").read()
+    style = deep_merge(load_preset(name), {"effects": {"flash": {"enabled": False}, "gradient": {"enabled": False}},
+                                           "layout": {"anchor_y": 0.5, "plain_anchor_y": 0.5, "offset_x": 0, "offset_y": 0}})
+    W, H = 540, 960
+    ink = style["colors"]["text"].lstrip("#")
+    light = sum(int(ink[i:i + 2], 16) for i in (0, 2, 4)) < 3 * 110
+    g = 238 if light else 24
+    bg = np.full((H, W, 3), g, np.uint8)
+    # "a Aa": o motor clássico só monta a pilha (serifada de ênfase) com duas palavras ou mais;
+    # o "a" de apoio vai na cor do fundo para não aparecer no ícone
+    ws = [transcript.Word("a", 0.2, 0.35, {"color:#%02X%02X%02X" % (g, g, g)}),
+          transcript.Word("Aa", 0.4, 1.1, set(FX_MARKS[mark]))]
+    style["effects"]["shadow"] = dict(style["effects"].get("shadow", {}), opacity=0.0)
+    plan = Planner(style).plan(ws)
+    sc = next(sc for sc in plan["scenes"] if any(t["wi"] == 1 for ln in sc["lines"] for t in ln["tokens"]))
+    t = min(sc["t_out"] - 0.03, 1.8)          # efeito já desenhado (elipse, traço, caixa) e palavra assentada
+    R = Renderer(style, plan, W, H)
+    img = R.frame(t, bg)
+    hit = next((h for h in R.hits(t) if h["wi"] == 1), None)
+    diff = np.abs(img.astype(int) - bg.astype(int)).max(axis=2) > 28
+    if hit is not None:   # só a palavra do efeito, com folga para elipse, brilho e caixa
+        hx0, hx1, hy0, hy1 = hit["x0"] * W, hit["x1"] * W, hit["y0"] * H, hit["y1"] * H
+        mx, my = (hx1 - hx0) * 0.22 + 6, (hy1 - hy0) * 0.45 + 6
+        box = np.zeros_like(diff)
+        box[int(max(0, hy0 - my)):int(hy1 + my), int(max(0, hx0 - mx)):int(hx1 + mx)] = True
+        diff &= box
+    ys, xs = np.where(diff)
+    if len(xs):
+        pad = 6
+        img = img[max(0, ys.min() - pad):ys.max() + pad, max(0, xs.min() - pad):xs.max() + pad]
+    h = 34
+    img = cv2.resize(img, (max(1, min(96, int(img.shape[1] * h / img.shape[0]))), h), interpolation=cv2.INTER_AREA)
+    data = cv2.imencode(".png", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))[1].tobytes()
     open(out, "wb").write(data)
     return data
 
@@ -475,6 +532,11 @@ class Handler(BaseHTTPRequestHandler):
             os.remove(p)
         self.send_json({"ok": True})
 
+    def api_preset_fx(self, q, name, mark):
+        if mark not in FX_MARKS:
+            return self.send_json({"error": "efeito desconhecido"}, 404)
+        self.send_bytes(preset_fx_icon(unquote(name), mark), "image/png")
+
     def api_preset_thumb(self, q, name):
         self.send_bytes(preset_thumb(unquote(name)), "image/jpeg")
 
@@ -619,6 +681,7 @@ ROUTES = [
     ("POST", r"/api/presets", Handler.api_preset_save),
     ("DELETE", r"/api/presets/([\w-]+)", Handler.api_preset_delete),
     ("GET", r"/api/presets/([\w%-]+)/thumb\.jpg", Handler.api_preset_thumb),
+    ("GET", r"/api/presets/([\w%-]+)/fx/(\w+)\.png", Handler.api_preset_fx),
     ("GET", r"/api/projects", Handler.api_projects),
     ("POST", r"/api/upload", Handler.api_upload),
     ("GET", r"/api/projects/(\w+)", Handler.api_project),

@@ -139,3 +139,48 @@ def compare_v7(preset="preset-8", times=(3.6, 13.5, 31.5, 33.0, 38.5, 41.4, 47.5
     out = os.path.join(OUT, f"v7_{preset}.jpg")
     cv2.imwrite(out, cv2.cvtColor(np.vstack(grid), cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 88])
     return out, plan
+
+
+def compare_v8(preset="preset-9"):
+    """Preset 9 desenhado sobre o quadro vazio logo após cada legenda da referência v8 (câmera fixa),
+    lado a lado com o quadro original com legenda."""
+    fps = 24000 / 1001
+    cases = [  # (quadro com legenda, quadro vazio, palavras)
+        (23, 25, [("In", 2 / fps, 0.3), ("2025", 8 / fps, 0.9, ["emph"])]),
+        (35, 37, [("How", 26 / fps, 1.15), ("are", 1.15, 1.2), ("you", 1.2, 1.25), ("gonna", 30 / fps, 1.45, ["emph"])]),
+        (60, 25, [("Fail", 38 / fps, 1.9, ["emph", "red"]), ("your", 46 / fps, 2.05), ("business", 2.05, 2.5)]),
+        (558, 562, [("need", 541 / fps, 22.7), ("help", 545 / fps, 23.2, ["emph"])]),
+    ]
+    st = S.load_preset(preset)
+    cols = []
+    for f, fb, spec in cases:
+        ws = words(spec)
+        R = Renderer(st, Planner(st).plan(ws), 720, 1280)
+        ours = R.frame(f / fps, frame("v8", fb))
+        pair = np.hstack([ours, np.full((1280, 6, 3), 255, np.uint8), frame("v8", f)])
+        cols.append(cv2.resize(pair, (pair.shape[1] // 3, pair.shape[0] // 3), interpolation=cv2.INTER_AREA))
+    out = os.path.join(OUT, f"v8_{preset}.jpg")
+    cv2.imwrite(out, cv2.cvtColor(np.vstack([np.hstack(cols[:2]), np.hstack(cols[2:])]), cv2.COLOR_RGB2BGR),
+                [cv2.IMWRITE_JPEG_QUALITY, 90])
+    return out
+
+
+def compare_v9(preset="preset-10", frames=(40, 105, 212, 320, 425, 498, 620, 1015), bg_frame=140):
+    """Preset 10 sobre a própria fala da referência v9 (analysis/v9/words.json), desenhado num quadro
+    sem legenda da mesma tomada, lado a lado com o quadro original."""
+    from legendapro import transcript as T
+    ws = T.from_json(os.path.join(ROOT, "analysis", "v9", "words.json"))
+    st = S.load_preset(preset)
+    plan = Planner(st).plan(ws)
+    R = Renderer(st, plan, 720, 1280)
+    bg = frame("v9", bg_frame)
+    cols = []
+    for f in frames:
+        t = (f - 1) / 30
+        pair = np.hstack([R.frame(t, bg)[:520], np.full((520, 6, 3), 255, np.uint8), frame("v9", f - 1)[:520]])
+        cv2.putText(pair, f"{t:.1f}s", (8, 24), 0, 0.7, (255, 255, 0), 2)
+        cols.append(cv2.resize(pair, (pair.shape[1] // 2, pair.shape[0] // 2), interpolation=cv2.INTER_AREA))
+    rows = [np.hstack(cols[i:i + 2]) for i in range(0, len(cols), 2)]
+    out = os.path.join(OUT, f"v9_{preset}.jpg")
+    cv2.imwrite(out, cv2.cvtColor(np.vstack(rows), cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 88])
+    return out, plan

@@ -1,0 +1,184 @@
+{
+  "name": "preset-11",
+  "title": "Preset 11",
+  "description": "Referência v10 (entrevista): Inter fina e elegante; a palavra de destaque nasce translúcida e desliza com desaceleração exponencial durante o bloco inteiro (como o 'estatisticamente'), alternando a direção (de baixo, da esquerda, de cima); embaixo dela a frase acende palavra a palavra no tempo da fala; números contam até o valor; troca seca de bloco.",
+  "fonts": {
+    "sans": {
+      "file": "Inter-VF.ttf",
+      "axes": {
+        "opsz": 32,
+        "wght": 370
+      },
+      "tracking": -0.05
+    },
+    "hero": {
+      "file": "Inter-VF.ttf",
+      "axes": {
+        "opsz": 32,
+        "wght": 330
+      },
+      "tracking": -0.06
+    },
+    "serif": {
+      "file": "Inter-VF.ttf",
+      "axes": {
+        "opsz": 32,
+        "wght": 330
+      },
+      "tracking": -0.06
+    }
+  },
+  "layout": {
+    "anchor_mode": "baseline",
+    "anchor_y": 0.62,
+    "safe_width": 0.8,
+    "base_size": 0.055,
+    "support_scale": 0.78,
+    "hero_scale": 1.75,
+    "hero_max_width": 0.5,
+    "serif_scale": 1.75,
+    "above_align": "left",
+    "above_indent": 0.0,
+    "below_align": "center",
+    "below_indent": 0.0,
+    "indent_fit": 1.0,
+    "gap_above": 0.012,
+    "gap_below": 0.016
+  },
+  "colors": {
+    "text": "#FEFBF7",
+    "hero": "#FEFBF7",
+    "red": "#FF4A3D",
+    "accent": "#FEFBF7"
+  },
+  "effects": {
+    "shadow": {
+      "opacity": 0.0,
+      "blur": 0.005,
+      "offset_y": 0.0
+    },
+    "gradient": {
+      "enabled": false,
+      "top": 0.45,
+      "full": 0.95,
+      "opacity": 0.75,
+      "curve": 1.0,
+      "color": "#000000"
+    },
+    "glow": {},
+    "anim": {
+      "plain": {
+        "type": "fade",
+        "reveal": "word",
+        "duration": 0.42,
+        "fade": 0.42,
+        "fade_ease": "linear",
+        "opacity_from": 0.0,
+        "dist": 0.0
+      },
+      "support": {
+        "type": "fade",
+        "reveal": "word",
+        "duration": 0.42,
+        "fade": 0.42,
+        "fade_ease": "linear",
+        "opacity_from": 0.0,
+        "dist": 0.0
+      },
+      "hero": {
+        "type": "rise",
+        "reveal": "word",
+        "duration": "scene",
+        "ease": "out_exp",
+        "ease_k": 3.8,
+        "fade": 0.8,
+        "fade_ease": "out_pow",
+        "fade_pow": 1.5,
+        "opacity_from": 0.15,
+        "from": [
+          "below",
+          "left",
+          "below",
+          "above",
+          "left"
+        ],
+        "dist": 0.13,
+        "dist_by_from": {
+          "below": 0.13,
+          "above": 0.07,
+          "left": 0.03,
+          "right": 0.03,
+          "none": 0.0
+        },
+        "motion_blur": 1.0
+      },
+      "serif": {
+        "type": "rise",
+        "reveal": "word",
+        "duration": "scene",
+        "ease": "out_exp",
+        "ease_k": 3.8,
+        "fade": 0.8,
+        "fade_ease": "out_pow",
+        "fade_pow": 1.5,
+        "opacity_from": 0.15,
+        "from": [
+          "below",
+          "left",
+          "below",
+          "above",
+          "left"
+        ],
+        "dist": 0.13,
+        "dist_by_from": {
+          "below": 0.13,
+          "above": 0.07,
+          "left": 0.03,
+          "right": 0.03,
+          "none": 0.0
+        },
+        "motion_blur": 1.0
+      }
+    },
+    "count_up": {
+      "enabled": true,
+      "rate": 12.0,
+      "max_duration": 0.7
+    },
+    "exit": {
+      "type": "cut"
+    },
+    "lead": 0.0
+  },
+  "rules": {
+    "engine": "phrase",
+    "emphasis_threshold": 2.0,
+    "emphasis_every": 3.5,
+    "emphasis_gap": 2.0,
+    "phrase_max_words": 7,
+    "support_max_words": 8,
+    "support_max_chars": 42,
+    "chunk_max_words": 4,
+    "chunk_max_chars": 24,
+    "chunk_pause": 0.35,
+    "max_hold": 3.0,
+    "case": "keep",
+    "strip_punct": "",
+    "hero_number_unit": true,
+    "serif_tail": false,
+    "article_alone": false,
+    "hero_absorb_after": true,
+    "min_word_time": 0.55,
+    "min_scene_time": 0.55,
+    "block_max_dur": 3.6
+  },
+  "effect_notes": {
+    "red": "palavra na cor de destaque vermelha",
+    "circle": "elipse desenhada em volta",
+    "underline": "traço desenhado embaixo da linha",
+    "box": "caixa chapada atrás da linha",
+    "break": "começa um bloco novo depois desta palavra",
+    "color": "cor só desta palavra",
+    "destaque": "palavra grande e fina que desliza devagar durante o bloco inteiro (como o 'estatisticamente'); números contam até o valor"
+  }
+}

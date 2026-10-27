@@ -161,5 +161,14 @@
     "block_pause": 0.9,
     "max_lines": 4,
     "box_hook": true
+  },
+  "effect_notes": {
+    "red": "palavra na cor de destaque vermelha",
+    "circle": "elipse desenhada em volta",
+    "underline": "traço desenhado embaixo da linha",
+    "box": "caixa revelada por cortina (como o 'in 30 seconds')",
+    "break": "começa um bloco novo depois desta palavra",
+    "color": "cor só desta palavra",
+    "destaque": "linha em negrito grande no bloco empilhado"
   }
 }

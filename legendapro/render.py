@@ -1,6 +1,7 @@
 """Compositor quadro a quadro (numpy + OpenCV + Pillow), sem frameworks de vídeo."""
 import math
 import os
+import re
 import subprocess
 import json
 
@@ -39,6 +40,10 @@ def ease_out_back(p, s=1.9):
 class Fonts:
     def __init__(self, preset):
         self.spec = preset["fonts"]
+        lay = preset.get("layout", {})
+        # ajustes globais (todas as fontes do preset): espaço entre letras e entre palavras
+        self.track_add = lay.get("tracking_add", 0.0)
+        self.word_space = lay.get("word_space", 1.0)
         self.cache = {}
 
     def get(self, role, px):
@@ -64,7 +69,7 @@ class Fonts:
         return self.cache[key]
 
     def tracking(self, role):
-        return self.spec[role].get("tracking", 0.0)
+        return self.spec[role].get("tracking", 0.0) + self.track_add
 
 
 class Sprites:
@@ -81,7 +86,8 @@ class Sprites:
         width = adv[-1] - tr if len(text) > 1 else adv[-1]
         x0, top, x1, bot = f.getbbox(text, anchor="ls")
         return {"adv": adv, "width": width, "top": top, "bottom": bot, "ink_l": x0,
-                "ink_r": x1 + tr * (len(text) - 1), "space": f.getlength(" ") * 0.78}
+                "ink_r": x1 + tr * (len(text) - 1),
+                "space": f.getlength(" ") * 0.78 * self.fonts.spec[role].get("space_scale", 1.0) * self.fonts.word_space}
 
     def get(self, text, role, px):
         key = (text, role, px)
@@ -193,6 +199,40 @@ def underline_path(x0, x1, y, size, n=70):
 
 # ---------------------------------------------------------------- compositor
 
+def blend_rgb(b, c, mode):
+    """Modos de mistura (fórmulas W3C/Photoshop), b = fundo, c = cor do texto, ambos 0..1."""
+    if mode == "multiply":
+        return b * c
+    if mode == "screen":
+        return 1 - (1 - b) * (1 - c)
+    if mode == "overlay":
+        return np.where(b <= 0.5, 2 * b * c, 1 - 2 * (1 - b) * (1 - c))
+    if mode == "hard_light":
+        return np.where(c <= 0.5, 2 * b * c, 1 - 2 * (1 - b) * (1 - c))
+    if mode == "soft_light":
+        d = np.where(b <= 0.25, ((16 * b - 12) * b + 4) * b, np.sqrt(b))
+        return np.where(c <= 0.5, b - (1 - 2 * c) * b * (1 - b), b + (2 * c - 1) * (d - b))
+    if mode == "color_dodge":
+        return np.where(c >= 1, 1.0, np.minimum(1, b / np.maximum(1 - c, 1e-4)))
+    if mode == "add":
+        return np.minimum(1, b + c)
+    if mode == "lighten":
+        return np.maximum(b, c)
+    if mode == "darken":
+        return np.minimum(b, c)
+    if mode == "difference":
+        return np.abs(b - c)
+    if mode == "exclusion":
+        return b + c - 2 * b * c
+    if mode == "divide":
+        return np.minimum(1, b / np.maximum(c, 1e-4))
+    return np.broadcast_to(c, b.shape)          # normal
+
+
+BLEND_MODES = ["normal", "multiply", "screen", "overlay", "soft_light", "hard_light", "color_dodge",
+               "add", "lighten", "darken", "difference", "exclusion", "divide"]
+
+
 class Canvas:
     """RGB uint8 (cor reta) + alfa uint8 opcional. A conta em float é feita só na região tocada,
     o que mantém o custo por frame proporcional ao texto e não à resolução."""
@@ -228,6 +268,20 @@ class Canvas:
             if c.ndim == 3:   # cor por pixel, no mesmo enquadramento da máscara
                 c = c[Y0 - y0:Y0 - y0 + bh, X0 - x0:X0 - x0 + bw]
         return X0, Y0, X0 + bw, Y0 + bh, sa, c * 255
+
+    def mix(self, x0, y0, a, color, mode="normal"):
+        """Como blend(), mas a cor do texto é combinada com o vídeo pelo modo de mistura."""
+        if mode == "normal" or self.a is not None:   # no MOV transparente não há fundo para misturar
+            return self.blend(x0, y0, a, color)
+        r = self._clip(x0, y0, a, color)
+        if r is None:
+            return
+        X0, Y0, X1, Y1, sa, c = r
+        roi = self.rgb[Y0:Y1, X0:X1].astype(np.float32) / 255
+        res = blend_rgb(roi, c / 255, mode)
+        sa3 = sa[..., None]
+        out = roi * (1 - sa3) + res * sa3
+        self.rgb[Y0:Y1, X0:X1] = np.clip(out * 255 + 0.5, 0, 255).astype(np.uint8)
 
     def screen(self, x0, y0, a, color):
         """Luz somada (modo screen): só clareia. Usado em brilhos e raios."""
@@ -302,7 +356,7 @@ class Renderer:
         dx, dy = lay.get("offset_x", 0.0) * self.W, lay.get("offset_y", 0.0) * self.H
         if not dx and not dy:
             return sc
-        phrase = sc["mode"] in ("plain", "hero", "block")
+        phrase = sc["mode"] in ("plain", "hero", "block", "fill")
         for l in sc["L"]:
             l["x0"] += dx
             l["x1"] += dx
@@ -338,9 +392,11 @@ class Renderer:
                     break
                 for tk in toks:
                     tk["px"] = max(8, int(tk["px"] * maxw / width))
+            size = max(tk["px"] for tk in toks)
             lines.append({"toks": toks, "width": width, "space": sp, "kind": ln["kind"], "src": ln,
                           "top": min(tk["m"]["top"] for tk in toks), "bottom": max(tk["m"]["bottom"] for tk in toks),
-                          "size": max(tk["px"] for tk in toks), "serif": False})
+                          "size": size, "serif": False, "box": ln.get("box", False),
+                          "cap": self.capheight(toks[0]["t"]["role"], size)})
         hero = next((l for l in lines if l["kind"] == "hero"), None)
         # horizontal
         for l in lines:
@@ -469,6 +525,89 @@ class Renderer:
         sc2["_guard"] = False
         return sc2
 
+    def prepare_fill(self, sc):
+        """Caixa de largura fixa: linha com palavra-chave escalada até preencher a caixa
+        (pequenas = herói / hero_ratio, mesma linha de base); linhas curtas em zigue-zague."""
+        W, H = self.W, self.H
+        lay = self.p["layout"]
+        box = lay["safe_width"] * W
+        ratio = lay.get("hero_ratio", 1.85)
+
+        def measure(toks, S):
+            for tk in toks:
+                tk["px"] = max(8, int(round(S if tk["t"]["anim"] == "hero" else S / ratio)))
+                tk["m"] = self.sprites.measure(tk["t"]["text"], tk["t"]["role"], tk["px"])
+            sp = max(tk["m"]["space"] for tk in toks)
+            return sum(tk["m"]["width"] for tk in toks) + sp * (len(toks) - 1), sp
+
+        lines = []
+        for ln in sc["lines"]:
+            toks = [{"t": t} for t in ln["tokens"]]
+            has_hero = any(t["anim"] == "hero" for t in ln["tokens"])
+            if has_hero:
+                lo, hi = 8.0, lay.get("hero_max_size", 0.12) * W
+                for _ in range(18):            # maior tamanho que cabe na caixa
+                    mid = (lo + hi) / 2
+                    if measure(toks, mid)[0] <= box:
+                        lo = mid
+                    else:
+                        hi = mid
+                width, sp = measure(toks, lo)
+            else:
+                S = lay["base_size"] * W * ratio   # pequenas no tamanho base
+                width, sp = measure(toks, S)
+                if width > box:
+                    width, sp = measure(toks, S * box / width)
+            size = max(tk["px"] for tk in toks)
+            big = max(toks, key=lambda tk: tk["px"])
+            lines.append({"toks": toks, "width": width, "space": sp, "kind": ln["kind"], "src": ln, "big": has_hero,
+                          "size": size, "cap": self.capheight(big["t"]["role"], big["px"]),
+                          "top": min(tk["m"]["top"] for tk in toks), "bottom": max(tk["m"]["bottom"] for tk in toks),
+                          "serif": False, "box": ln.get("box", False)})
+        # vertical
+        for k, l in enumerate(lines):
+            if k == 0:
+                l["base"] = l["cap"]
+                continue
+            p = lines[k - 1]
+            if p["big"] and l["big"]:
+                l["base"] = p["base"] + lay.get("hero_line_gap", 0.94) * l["size"]
+            else:
+                g = lay.get("gap_above", 0.016) if (p["big"] or l["big"]) else lay.get("gap_lines", 0.011)
+                l["base"] = p["base"] + g * W + l["cap"]
+        top = min(l["base"] + l["top"] for l in lines)
+        bot = max(l["base"] + l["bottom"] for l in lines)
+        oy = lay["anchor_y"] * H - (top + bot) / 2
+        # horizontal: linha cheia centrada; curta em zigue-zague dentro da caixa
+        bx0, ind = W / 2 - box / 2, lay.get("stagger_indent", 0.025) * W
+        full = [l["width"] >= box * 0.95 for l in lines]
+        for k, l in enumerate(lines):
+            if full[k] or len(lines) == 1:
+                x0 = W / 2 - l["width"] / 2
+            elif k + 1 < len(lines) and full[k + 1]:
+                x0 = bx0 + box - ind - l["width"]          # acima de uma cheia: à direita
+            elif k > 0 and full[k - 1]:
+                x0 = bx0 + ind                              # abaixo de uma cheia: à esquerda
+            else:
+                x0 = bx0 + ind if k % 2 == 0 else bx0 + box - ind - l["width"]
+            x0 = min(max(x0, bx0), bx0 + box - l["width"]) if l["width"] <= box else W / 2 - l["width"] / 2
+            l["x0"], l["x1"] = x0, x0 + l["width"]
+            l["base"] += oy
+            l["t_in"] = min(tk["t"]["t_in"] for tk in l["toks"])
+            l["t_out"] = sc["t_out"]
+            x = x0
+            for tk in l["toks"]:
+                tk["x"] = x
+                tk["base"] = l["base"]
+                tk["rgb"] = hex2rgb(tk["t"]["color"])
+                x += tk["m"]["width"] + l["space"]
+        sc2 = dict(sc)
+        sc2["L"] = lines
+        sc2["events"] = [(sc["t_in"], 0.0)]
+        sc2["bg_rgb"] = None
+        sc2["_guard"] = False
+        return sc2
+
     def exit_factor(self, sc, t):
         """Opacidade que sobra da saída do bloco no tempo t (None = já saiu)."""
         X = self.fx.get("exit", {})
@@ -482,9 +621,9 @@ class Renderer:
     def draw_box(self, cv, sc, l, t, op):
         """Caixa chapada atrás da linha, revelada por cortina da esquerda para a direita.
         Devolve a borda direita visível (para recortar o texto) ou None."""
-        B = self.p["colors"].get("box") or {}
+        B = self.p["colors"].get("box") or {"fill": self.p["colors"].get("red", "#E3241D"), "text": "#FFFFFF"}
         W = self.W
-        p = clamp01((t - l["t_in"]) / max(self.fx.get("box_wipe", {}).get("duration", 0.83), 1e-3))
+        p = clamp01((t - l["t_in"]) / max(self.fx.get("box_wipe", {}).get("duration", 0.3), 1e-3))
         e = (1 - math.cos(math.pi * p)) / 2
         px, py = B.get("pad_x", 0.022) * W, B.get("pad_y", 0.024) * W
         bx0, bx1 = l["x0"] - px, l["x1"] + px
@@ -521,16 +660,28 @@ class Renderer:
         dirs = {"below": (0, 1), "above": (0, -1), "right": (1, 0), "left": (-1, 0)}
         p = t - tin
         if A.get("type", "cut") != "cut":
-            dur = max(A.get("duration", 0.3), 1e-3)
+            # "scene": o movimento dura o bloco inteiro (desliza até o corte, nunca para de vez)
+            dur = max(sc["t_out"] - tin if A.get("duration") == "scene" else A.get("duration", 0.3), 1e-3)
             fade = A.get("fade", dur)
             # "quad" é a curva medida nas referências; "cubic" chega mais rápido
             ease, dease = {
                 "out_cubic": (ease_out_cubic, lambda u: 3 * (1 - u) ** 2),
                 "out_quart": (lambda u: 1 - (1 - u) ** 4, lambda u: 4 * (1 - u) ** 3),
+                "linear": (lambda u: u, lambda u: 1.0),
             }.get(A.get("ease"), (lambda u: 1 - (1 - u) ** 2, lambda u: 2 * (1 - u)))
+            if A.get("ease") == "out_exp":   # desaceleração exponencial (k ≈ 3,8)
+                k_ = A.get("ease_k", 3.8)
+                nrm = 1 - math.exp(-k_)
+                ease = lambda u: (1 - math.exp(-k_ * u)) / nrm
+                dease = lambda u: k_ * math.exp(-k_ * u) / nrm
+            if A.get("until") == "word_end" and tt.get("t_end") is not None:
+                # a palavra completa no instante em que a próxima começa ("snap")
+                dur = max(min(dur, tt["t_end"] - tin), 1e-3)
+                fade = min(fade, dur)
             fe = A.get("fade_ease", "out_quad")
             op = clamp01(p / fade) if fade > 0 else 1.0
-            op = ease_out_cubic(op) if fe == "out_cubic" else op if fe == "linear" else 1 - (1 - op) ** 2
+            op = ease_out_cubic(op) if fe == "out_cubic" else op if fe == "linear" \
+                else 1 - (1 - op) ** A.get("fade_pow", 1.5) if fe == "out_pow" else 1 - (1 - op) ** 2
             u = clamp01(p / dur)
             e = ease(u)
             if A.get("fade_with_motion"):   # opacidade segue exatamente a curva do movimento
@@ -539,11 +690,11 @@ class Renderer:
             op = a0 + (1 - a0) * op
             frm = A.get("from", "below")
             if isinstance(frm, list):   # direção alternada entre destaques (de baixo, da direita…)
-                frm = frm[tt.get("wi", 0) % len(frm)]
+                frm = frm[tt.get("hero_n", tt.get("wi", 0)) % len(frm)]
             elif frm == "auto_line":    # linha longa vem da direita, o resto de baixo
                 frm = "right" if tt.get("line_n", 1) >= A.get("right_if_words", 4) else "below"
-            ddx, ddy = dirs.get(frm, (0, 1))
-            dist = A.get("dist", 0.0) * W
+            ddx, ddy = dirs.get(frm, (0, 0) if frm == "none" else (0, 1))
+            dist = A.get("dist_by_from", {}).get(frm, A.get("dist", 0.0)) * W
             dx, dy = ddx * dist * (1 - e), ddy * dist * (1 - e)
             if u < 1 and A.get("motion_blur"):
                 v = dist * dease(u) / dur / 30.0 * A["motion_blur"]
@@ -569,6 +720,21 @@ class Renderer:
                 vx, vy = vx + ddx * v, vy + ddy * v
             blur += X.get("blur", 0.0) * W * q
         return op, dx, dy, blur, (vx, vy)
+
+    def count_text(self, sc, tk, t):
+        """Número que conta de 0 até o valor na entrada (effects.count_up), com o layout do valor final."""
+        C = self.fx.get("count_up") or {}
+        text = tk["t"]["text"]
+        if not C.get("enabled") or tk["t"].get("anim") != "hero":
+            return text
+        m = re.match(r"^(\D*)(\d+)(.*)$", text)
+        if not m:
+            return text
+        n = int(m.group(2))
+        tin = max(tk["t"]["t_in"], sc["t_in"])
+        dur = min(C.get("max_duration", 0.7), n / max(C.get("rate", 12.0), 1e-3))
+        cur = n if dur <= 0 else int(round(n * clamp01((t - tin) / dur)))
+        return f"{m.group(1)}{max(cur, 1 if n else 0)}{m.group(3)}"
 
     def glow_img(self, spr, kind, G):
         """Brilho em camadas (soma de gaussianas da máscara), em cache por sprite."""
@@ -672,7 +838,7 @@ class Renderer:
                 if s is None or s[0] <= 0.003:
                     continue
                 op, dx, dy, blur, (vx, vy) = s
-                spr = self.sprites.get(tk["t"]["text"], tk["t"]["role"], tk["px"])
+                spr = self.sprites.get(self.count_text(sc, tk, t), tk["t"]["role"], tk["px"])
                 ax, ay = tk["x"] + dx, tk["base"] + dy
                 x0, y0, mask = warp_mask(spr, ax, ay, 1.0, blur, extra=4 + abs(vx) + abs(vy))
                 ml = math.hypot(vx, vy)
@@ -706,9 +872,13 @@ class Renderer:
                     if cut < mask.shape[1]:
                         mask = mask.copy()
                         mask[:, max(cut, 0):] = 0
-                    cv.blend(x0, y0, mask * op, hex2rgb(self.p["colors"].get("box", {}).get("text", "#FFFFFF")))
+                    cv.blend(x0, y0, mask * op, hex2rgb((self.p["colors"].get("box") or {}).get("text", "#FFFFFF")))
                     continue
-                cv.blend(x0, y0, mask * op, self.fill_img(tk, x0, y0, mask.shape))
+                Bm = self.fx.get("blend") or {}
+                mode = Bm.get("mode", "normal") if Bm.get("enabled") and kind in Bm.get("roles", [kind]) \
+                    and not tk["t"].get("user_color") else "normal"
+                cv.mix(x0, y0, mask * op * (Bm.get("opacity", 1.0) if mode != "normal" else 1.0),
+                       self.fill_img(tk, x0, y0, mask.shape), mode)
         oy = 0.0
         for d in sc.get("decos", []):
             self.draw_deco(cv, sc, d, t, oy)
@@ -717,6 +887,8 @@ class Renderer:
     def prepare(self, sc):
         if sc["mode"] == "block":
             return self.prepare_block(sc)
+        if sc["mode"] == "fill":
+            return self.prepare_fill(sc)
         if sc["mode"] in ("plain", "hero"):
             return self.prepare_phrase(sc)
         W, H = self.W, self.H
@@ -856,7 +1028,7 @@ class Renderer:
     def draw_scene(self, cv, sc, t):
         if t < sc["t_in"] - 1e-6:
             return
-        if sc["mode"] in ("plain", "hero", "block"):
+        if sc["mode"] in ("plain", "hero", "block", "fill"):
             return self.draw_phrase(cv, sc, t)
         stagger = self.fx["blur_out"]["stagger"] * len(sc["L"])
         tail = self.fx["blur_out"]["duration"] + stagger if sc["exit"] == "blur" else 0
@@ -1013,7 +1185,7 @@ class Renderer:
         for sc in self.scenes:
             if not (sc["t_in"] - 0.01 <= t < sc["t_out"]):
                 continue
-            phrase = sc["mode"] in ("plain", "hero", "block")
+            phrase = sc["mode"] in ("plain", "hero", "block", "fill")
             oy = 0.0 if phrase else self.offset(sc, t)
             for li, l in enumerate(sc["L"]):
                 for tk in l["toks"]:

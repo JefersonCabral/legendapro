@@ -67,14 +67,14 @@ const toast = (msg, err = false) => {
 const pct = v => `${Math.round(v * 100)}%`;
 const CONTROLS = [
   { g: "Posição e tamanho", open: true, items: [
-    { p: "layout.offset_x", l: "Mover para os lados", t: "range", min: -.3, max: .3, step: .005, def: 0, always: true,
+    { p: "layout.offset_x", l: "Mover para os lados", t: "range", min: -.45, max: .45, step: .005, def: 0, always: true,
       f: v => Math.abs(v) < .001 ? "centro" : v < 0 ? `← ${Math.round(-v * 100)}% esquerda` : `direita ${Math.round(v * 100)}% →` },
-    { p: "layout.offset_y", l: "Mover para cima / baixo", t: "range", min: -.3, max: .3, step: .005, def: 0, always: true,
+    { p: "layout.offset_y", l: "Mover para cima / baixo", t: "range", min: -.8, max: .8, step: .005, def: 0, always: true,
       f: v => Math.abs(v) < .001 ? "posição do estilo" : v < 0 ? `↑ ${Math.round(-v * 100)}% acima` : `↓ ${Math.round(v * 100)}% abaixo` },
     { p: "_offset_reset", t: "button", l: "Voltar a legenda para a posição do estilo", always: true,
       hint: "Ou arraste a legenda direto no vídeo: clique numa palavra e arraste. Vale para todas as legendas.",
       act: () => { setOverride("layout.offset_x", 0); setOverride("layout.offset_y", 0); syncControls(); } },
-    { p: "layout.anchor_y", l: "Altura na tela", t: "range", min: .25, max: .88, step: .005, f: pct },
+    { p: "layout.anchor_y", l: "Altura na tela", t: "range", min: .05, max: .95, step: .005, f: pct },
     { p: "layout.base_size", l: "Tamanho do texto", t: "range", min: .045, max: .11, step: .001, f: v => `${(v * 100).toFixed(1)}% da largura` },
     { p: "layout.hero_scale", l: "Tamanho do destaque", t: "range", min: 1, max: 4, step: .05, f: v => `${v.toFixed(2)}×` },
     { p: "layout.serif_scale", l: "Tamanho da ênfase", t: "range", min: 1, max: 2.6, step: .05, f: v => `${v.toFixed(2)}×` },
@@ -90,6 +90,15 @@ const CONTROLS = [
     { p: "colors.red", l: "Destaque vermelho", t: "color" },
     { p: "colors.accent", l: "Elipse", t: "color" },
   ]},
+  { g: "Mistura com o vídeo (blend mode)", items: [
+    { p: "effects.blend.enabled", l: "Texto mistura com o vídeo", t: "switch", always: true },
+    { p: "effects.blend.mode", l: "Modo de mistura", t: "select", always: true, def: "difference", o: [
+      ["difference", "Diferença (difference)"], ["normal", "Normal"], ["screen", "Clarear (screen)"], ["overlay", "Sobrepor (overlay)"], ["soft_light", "Luz suave (soft light)"],
+      ["hard_light", "Luz direta (hard light)"], ["color_dodge", "Subexposição de cor (color dodge)"], ["add", "Adição (linear dodge)"],
+      ["lighten", "Clarear cor (lighten)"], ["multiply", "Multiplicar"], ["darken", "Escurecer"],
+      ["exclusion", "Exclusão"], ["divide", "Dividir (divide)"]] },
+    { p: "effects.blend.opacity", l: "Intensidade da mistura", t: "range", min: .1, max: 1, step: .01, def: 1, always: true, f: pct },
+  ]},
   { g: "Gradiente atrás da legenda", items: [
     { p: "effects.gradient.enabled", l: "Escurecer a parte de baixo do vídeo", t: "switch", always: true },
     { p: "effects.gradient.opacity", l: "Intensidade", t: "range", min: .1, max: 1, step: .01, f: pct },
@@ -99,7 +108,10 @@ const CONTROLS = [
   ]},
   { g: "Fontes", items: [
     { p: "fonts.sans.file", l: "Sans (texto corrido)", t: "font" },
-    { p: "fonts.sans.tracking", l: "Espaçamento da sans", t: "range", min: -.08, max: .05, step: .005, f: v => v.toFixed(3) },
+    { p: "layout.tracking_add", l: "Espaço entre letras (todo o texto)", t: "range", min: -.08, max: .15, step: .005, def: 0, always: true,
+      f: v => Math.abs(v) < .001 ? "como no estilo" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}% mais ${v > 0 ? "solto" : "justo"}` },
+    { p: "layout.word_space", l: "Espaço entre palavras (todo o texto)", t: "range", min: .3, max: 2.5, step: .05, def: 1, always: true,
+      f: v => Math.abs(v - 1) < .001 ? "como no estilo" : `${v.toFixed(2)}×` },
     { p: "fonts.sans_i.file", l: "Sans itálica (abertura / caixa)", t: "font" },
     { p: "fonts.serif.file", l: "Serifada (ênfase)", t: "font" },
     { p: "fonts.serif.weight", l: "Peso da serifada", t: "range", min: 400, max: 900, step: 50, f: v => String(v) },
@@ -182,7 +194,7 @@ function syncControls() {
     if (c.t === "range") { const i = $("input", w); i.value = v ?? c.def ?? c.min; paintRange(i); $("output", w).textContent = c.f(+i.value); }
     else if (c.t === "switch") $("input", w).checked = !!v;
     else if (c.t === "color") { $("input", w).value = (v || "#ffffff").toLowerCase(); $("code", w).textContent = (v || "").toUpperCase(); }
-    else $("select", w).value = String(v);
+    else $("select", w).value = String(v ?? c.def);
   }
 }
 
@@ -220,7 +232,7 @@ function renderPresets() {
       if (!S.cur) return;
       await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { preset: p.name } });
       S.cur.preset = p.name; S.base = p; S.overrides = {};
-      renderPresets(); syncControls(); loadProjects(); await refreshPlan();
+      renderPresets(); syncControls(); syncEffects(); loadProjects(); await refreshPlan();
       toast(`Estilo “${p.title || p.name}” aplicado`);
     });
     grid.appendChild(b);
@@ -292,7 +304,7 @@ async function openProject(id) {
   $("#text").value = p.text || ""; setSave("");
   const pl = $("#player"); pl.pause(); pl.removeAttribute("src"); pl.hidden = true; $("#frame").hidden = false;
   $("#inspector").classList.toggle("disabled", !p.has_words);
-  renderPresets(); syncControls(); renderExports(); loadProjects();
+  renderPresets(); syncControls(); syncEffects(); renderExports(); loadProjects();
   if (p.job && p.job.status === "running") watchJob(p.job);
   if (p.has_words) await refreshPlan(); else { $("#tlTrack").innerHTML = ""; requestFrame(); }
   updatePreviewState();
@@ -411,7 +423,7 @@ function updateHead() {
   $("#tlHead").style.left = `calc(${f * 100}% - 1px)`;
   $("#scrub").value = f;
   $("#tcNow").textContent = fmtTime(S.t);
-  const names = { chunk: "chunk", stack: "pilha", solo: "solo", card: "card", plain: "bloco", hero: "destaque", block: "frase empilhada" };
+  const names = { chunk: "chunk", stack: "pilha", solo: "solo", card: "card", plain: "bloco", hero: "destaque", block: "frase empilhada", fill: "caixa" };
   let now = null;
   for (const sc of S.plan?.scenes || []) {
     const on = S.t >= sc.t_in && S.t < sc.t_out;
@@ -732,8 +744,8 @@ $("#hits").addEventListener("pointermove", e => {
   const box = $("#hits"), r = $("#phone").getBoundingClientRect();
   box.classList.add("dragging");
   box.style.transform = `translate(${dx}px, ${dy}px)`;
-  drag.nx = Math.max(-.3, Math.min(.3, Math.round((drag.ox + dx / r.width) * 200) / 200));
-  drag.ny = Math.max(-.3, Math.min(.3, Math.round((drag.oy + dy / r.height) * 200) / 200));
+  drag.nx = Math.max(-.45, Math.min(.45, Math.round((drag.ox + dx / r.width) * 200) / 200));
+  drag.ny = Math.max(-.8, Math.min(.8, Math.round((drag.oy + dy / r.height) * 200) / 200));
   if (Math.abs(drag.nx) < .015) drag.nx = 0;   // gruda no centro
   $("#dragTip").hidden = false;
   $("#dragTip").textContent = `${drag.nx === 0 ? "centro" : `${drag.nx > 0 ? "→" : "←"} ${Math.round(Math.abs(drag.nx) * 100)}%`} · ${drag.ny === 0 ? "altura do estilo" : `${drag.ny > 0 ? "↓" : "↑"} ${Math.round(Math.abs(drag.ny) * 100)}%`}`;
@@ -780,6 +792,39 @@ const SWATCHES = () => [
   ["#E3241D", "Vermelho"], ["#49DC7B", "Verde"], ["#3DA5FF", "Azul"], ["#B86CFF", "Roxo"], ["#111111", "Preto"],
 ].filter(([c], k, a) => k === 0 || (c && a.findIndex(([x]) => x?.toUpperCase() === c.toUpperCase()) === k));
 
+/* efeitos disponíveis e o que cada um faz no estilo atual (preset.effect_notes) */
+const EFFECT_KEY = { emph: "destaque", destaque: "destaque" };
+const PHRASE_ONLY_HIDE = ["solo", "card"];   // não existem nos estilos do motor "frase"
+function syncEffects() {
+  const st = S.base ? merge(S.base, S.overrides) : {};
+  const notes = st.effect_notes || {};
+  const phrase = (st.rules || {}).engine === "phrase";
+  for (const b of $$("#wpMarks button, #marks button")) {
+    const m = b.dataset.mark;
+    b.hidden = phrase && PHRASE_ONLY_HIDE.includes(m);
+    const n = notes[EFFECT_KEY[m] || m];
+    if (n) b.title = `${b.textContent.trim()}: ${n}`;
+  }
+  if (notes.color) $(".mark-color").title = `Cor: ${notes.color}`;
+  // ícone de cada efeito = prévia renderizada pelo próprio preset (como vai sair no vídeo)
+  const pname = st.name, ver = S.base?._v || 0;
+  for (const b of $$("#wpMarks button, #marks button")) {
+    const m = b.dataset.mark === "emph" ? "destaque" : b.dataset.mark;
+    if (!["destaque", "red", "circle", "underline", "box", "solo"].includes(m) || !pname) continue;
+    let img = $("img.fx-ico", b);
+    if (!img) {
+      img = document.createElement("img"); img.className = "fx-ico"; img.alt = "";
+      img.onerror = () => { img.hidden = true; if (b.firstElementChild !== img) b.firstElementChild.hidden = false; };
+      b.prepend(img);
+    }
+    const src = `/api/presets/${encodeURIComponent(pname)}/fx/${m}.png?v=${ver}`;
+    if (img.getAttribute("src") !== src) { img.hidden = false; img.src = src; }
+    const old = img.nextElementSibling;
+    if (old && old.tagName !== "IMG" && old !== b.lastChild) old.hidden = true;   // esconde o "Aa" genérico
+  }
+  $("#wpNote").innerHTML = notes.destaque ? `<b>Destaque neste estilo:</b> ${escapeHtml(notes.destaque)}` : "";
+}
+
 function renderPop() {
   const pop = $("#wordPop");
   const pl = $("#player");
@@ -787,6 +832,7 @@ function renderPop() {
   const toks = selToks();
   if (!toks.length) { pop.hidden = true; return; }
   pop.hidden = false;
+  syncEffects();
   $("#wpCount").textContent = toks.length === 1 ? "1 palavra" : `${toks.length} palavras`;
   const inp = $("#wpText");
   if (document.activeElement !== inp || inp.dataset.sel !== S.sel.join()) {

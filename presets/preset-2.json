@@ -128,5 +128,15 @@
     "emphasis_gap": 2.2,
     "box_cooldown": 8.0,
     "capitalize_stacks": true
+  },
+  "effect_notes": {
+    "destaque": "serifada itálica grande na pilha",
+    "red": "vermelho vivo piscando",
+    "circle": "elipse verde desenhada à mão",
+    "underline": "sublinhado em traço",
+    "box": "caixa vermelha (como no 'Não')",
+    "solo": "palavra sozinha, grande, com pop",
+    "break": "começa uma cena nova depois desta palavra",
+    "color": "cor só desta palavra"
   }
 }

@@ -153,5 +153,14 @@
     "hero_number_unit": true,
     "serif_tail": true,
     "article_alone": false
+  },
+  "effect_notes": {
+    "red": "palavra na cor de destaque vermelha",
+    "circle": "elipse desenhada em volta",
+    "underline": "traço desenhado embaixo da linha",
+    "box": "caixa chapada atrás da linha",
+    "break": "começa um bloco novo depois desta palavra",
+    "color": "cor só desta palavra",
+    "destaque": "palavra amarela com degradê, halo e raios de luz atravessando"
   }
 }
