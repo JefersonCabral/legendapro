@@ -98,7 +98,13 @@
           <svg viewBox="0 0 24 24" class="i-pause"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg>
         </button>
         <div class="tc"><span id="tcNow">00:00.00</span><span class="tc-sep">/</span><span id="tcDur">00:00.00</span></div>
-        <div class="preview-state" id="previewState"></div>
+        <div class="pv-box">
+          <span class="preview-state" id="previewState"></span>
+          <button class="btn btn-sm" id="btnRefresh" hidden title="Gera de novo o vídeo da prévia com as alterações (R)">Atualizar prévia</button>
+          <label class="pv-auto" title="Ligado: a prévia em vídeo se refaz sozinha depois de cada alteração. Desligado: só quando você clicar em Atualizar ou der play. O quadro parado sempre mostra a mudança na hora.">
+            <input type="checkbox" id="autoPreview"><span>Automática</span>
+          </label>
+        </div>
         <div class="step-btns">
           <button class="btn-ghost" id="btnPrev" title="Quadro anterior (←)">‹</button>
           <button class="btn-ghost" id="btnNext" title="Próximo quadro (→)">›</button>
@@ -111,14 +117,10 @@
         <div class="tl-head" id="tlHead"><span></span></div>
         <input type="range" id="scrub" min="0" max="1" step="0.001" value="0" aria-label="Posição">
       </div>
-      <div class="tl-legend" title="Cada bloco da linha do tempo é uma cena: o jeito como as palavras daquele trecho aparecem na tela.">
-        <span><b class="m-chunk"></b>Chunk / bloco <small>poucas palavras por vez</small></span>
-        <span><b class="m-stack"></b>Pilha / destaque <small>frase com palavra em evidência</small></span>
-        <span><b class="m-solo"></b>Solo <small>palavra grande com pop</small></span>
-        <span><b class="m-card"></b>Card <small>fundo chapado</small></span>
-        <span><b class="m-flash"></b>Flash <small>clarão entre frases</small></span>
+      <div class="tl-foot">
+        <div class="scene-now" id="sceneNow"></div>
+        <div class="tl-legend" id="tlLegend" title="Cada bloco da linha do tempo é uma cena: o jeito como as palavras daquele trecho aparecem na tela."></div>
       </div>
-      <div class="scene-now" id="sceneNow"></div>
     </div>
   </section>
 
@@ -176,7 +178,7 @@
         <h2>Estilo</h2>
         <button class="btn-link" id="btnResetStyle">Restaurar preset</button>
       </div>
-      <p class="hint">Tudo aqui vale para <b>este vídeo inteiro</b> e já aparece no preview. Vídeos exportados antes não mudam: renderize de novo na aba Exportar. Para mudar só algumas palavras, clique nelas no vídeo.</p>
+      <p class="hint">Tudo aqui vale para <b>este vídeo inteiro</b> e aparece na hora no quadro parado (o vídeo da prévia atualiza no play ou em “Atualizar prévia”). Vídeos exportados antes não mudam: renderize de novo na aba Exportar. Para mudar só algumas palavras, clique nelas no vídeo.</p>
       <div class="presets" id="presetGrid"></div>
       <div id="controls" class="controls"></div>
       <div class="save-preset">

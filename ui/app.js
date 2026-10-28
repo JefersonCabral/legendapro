@@ -113,8 +113,9 @@ const CONTROLS = [
     { p: "layout.word_space", l: "Espaço entre palavras (todo o texto)", t: "range", min: .3, max: 2.5, step: .05, def: 1, always: true,
       f: v => Math.abs(v - 1) < .001 ? "como no estilo" : `${v.toFixed(2)}×` },
     { p: "fonts.sans_i.file", l: "Sans itálica (abertura / caixa)", t: "font" },
-    { p: "fonts.serif.file", l: "Serifada (ênfase)", t: "font" },
-    { p: "fonts.serif.weight", l: "Peso da serifada", t: "range", min: 400, max: 900, step: 50, f: v => String(v) },
+    { p: "fonts.hero.file", l: "Palavra de destaque", t: "font" },
+    { p: "fonts.serif.file", l: "Ênfase (serifada / itálica)", t: "font" },
+    { p: "fonts.serif.weight", l: "Peso da ênfase", t: "range", min: 400, max: 900, step: 50, f: v => String(v) },
   ]},
   { g: "Animação", items: [
     { p: "effects.blur_in.duration", l: "Duração da entrada com blur", t: "range", min: .08, max: .6, step: .01, f: v => `${v.toFixed(2)}s` },
@@ -196,6 +197,7 @@ function syncControls() {
     else if (c.t === "color") { $("input", w).value = (v || "#ffffff").toLowerCase(); $("code", w).textContent = (v || "").toUpperCase(); }
     else $("select", w).value = String(v ?? c.def);
   }
+  for (const d of $$("#controls details.group")) d.hidden = !$$(".ctl", d).some(w => w.style.display !== "none");
 }
 
 const pushOverrides = debounce(async () => {
@@ -258,10 +260,10 @@ async function loadProjects() {
   const r = await api("/api/projects"); S.projects = r.projects;
   const list = $("#projectList"); list.innerHTML = "";
   for (const p of S.projects) {
-    const el = document.createElement("div"); el.className = "proj" + (S.cur?.id === p.id ? " active" : ""); el.tabIndex = 0;
+    const el = document.createElement("div"); el.className = "proj" + (S.cur?.id === p.id ? " active" : ""); el.tabIndex = 0; el.title = `${p.name} · ${p.width}×${p.height}`;
     const st = { novo: "na fila", transcrito: "pronto" }[p.status] || p.status;
     el.innerHTML = `<img src="/api/projects/${p.id}/thumb.jpg" alt="">
-      <div><div class="proj-name"></div><div class="proj-meta">${fmtTime(p.duration).slice(0, 5)} · ${p.width}×${p.height}<br>${escapeHtml(S.presets.find(x => x.name === p.preset)?.title || p.preset)} · ${st}</div></div>
+      <div><div class="proj-name"></div><div class="proj-meta">${fmtTime(p.duration).slice(0, 5)} · ${st}</div><div class="proj-meta">${escapeHtml(S.presets.find(x => x.name === p.preset)?.title || p.preset)}</div></div>
       <button class="proj-del" title="Apagar projeto">×</button>`;
     $(".proj-name", el).textContent = p.name;
     el.addEventListener("click", e => {
@@ -274,7 +276,7 @@ async function loadProjects() {
 
 async function deleteProject(p) {
   if (!confirm(`Apagar o projeto “${p.name}” e os vídeos dele?`)) return;
-  await api(`/api/projects/${p.id}`, { method: "DELETE" });
+  try { await api(`/api/projects/${p.id}`, { method: "DELETE" }); } catch (e) { return toast(e.message, true); }
   if (S.cur?.id === p.id) closeProject();
   loadProjects();
 }
@@ -396,7 +398,7 @@ async function refreshPlan() {
   catch (e) { toast(e.message, true); return; }
   S.sel = S.sel.filter(i => i < S.plan.words.length);
   drawTimeline(); requestFrame(); updatePreviewState(); renderPop();
-  if (S.plan.key !== S.previewKey) autoPreview();
+  if (autoMode && S.plan.key !== S.previewKey) autoPreview();
 }
 
 function drawTimeline() {
@@ -414,9 +416,22 @@ function drawTimeline() {
   for (const f of S.plan.flashes) {
     const el = document.createElement("div"); el.className = "tl-flash"; el.style.left = `${(f / D) * 100}%`; fl.appendChild(el);
   }
+  const modes = new Set(S.plan.scenes.map(sc => sc.mode));
+  const leg = LEGEND.filter(([ms]) => ms.some(m => modes.has(m)) || (ms[0] === "flash" && S.plan.flashes.length));
+  $("#tlLegend").innerHTML = leg.map(([, cls, l, d]) => `<span title="${d}"><b class="${cls}"></b>${l}</span>`).join("");
   updateHead();
 }
 
+const LEGEND = [
+  [["chunk", "plain"], "m-chunk", "Bloco", "poucas palavras por vez, troca seca"],
+  [["stack"], "m-stack", "Pilha", "frase em linhas com palavra em evidência"],
+  [["hero"], "m-stack", "Destaque", "palavra grande em evidência com a frase em volta"],
+  [["block"], "m-stack", "Frase empilhada", "a frase vai se acumulando em linhas"],
+  [["fill"], "m-stack", "Caixa", "linhas que preenchem a largura da caixa"],
+  [["solo"], "m-solo", "Solo", "palavra grande com pop"],
+  [["card"], "m-card", "Card", "fundo chapado"],
+  [["flash"], "m-flash", "Flash", "clarão entre frases"],
+];
 function updateHead() {
   if (!S.cur) return;
   const D = S.cur.duration, f = Math.min(1, S.t / D);
@@ -473,27 +488,34 @@ $("#btnPrev").addEventListener("click", () => seek(S.t - 1 / (S.cur?.fps || 30))
 $("#btnNext").addEventListener("click", () => seek(S.t + 1 / (S.cur?.fps || 30)));
 
 /* ------------------------------------------------------------ prévia em movimento
-   A prévia se refaz sozinha (em baixa resolução) pouco depois de cada alteração; o quadro
-   parado já mostra a mudança na hora. */
+   O quadro parado mostra cada alteração na hora. O vídeo da prévia (720p) só é refeito quando
+   você pede (Atualizar prévia / play) — ou depois de cada alteração, se "Automática" estiver
+   ligada. Uma prévia nova nunca troca o vídeo que está tocando. */
 let previewJob = null;   // {id, key, progress} da prévia sendo gerada
 let wantPlay = false;    // tocar assim que a prévia ficar pronta
-let swapping = false;    // trocando o arquivo do player sem parar a reprodução
+let autoMode = false;
+try { autoMode = localStorage.getItem("lp.autoPreview") === "1"; } catch {}
 const previewFresh = () => !!(S.previewKey && S.plan && S.previewKey === S.plan.key && S.previewUrl);
 
 function updatePreviewState() {
   const el = $("#previewState");
   $("#btnPlay").classList.toggle("loading", !!previewJob && wantPlay);
   el.classList.remove("stale", "busy");
-  if (!S.cur?.has_words) { el.textContent = ""; return; }
+  const has = !!S.cur?.has_words;
+  $("#btnRefresh").hidden = !has || previewFresh() || !!previewJob || autoMode;
+  if (!has) { el.textContent = ""; return; }
   if (previewFresh()) el.textContent = "prévia em dia";
-  else if (previewJob) { el.textContent = `atualizando prévia ${Math.round((previewJob.progress || 0) * 100)}%`; el.classList.add("busy"); }
-  else { el.textContent = "prévia vai se atualizar…"; el.classList.add("stale"); }
+  else if (previewJob) { el.textContent = `gerando prévia ${Math.round((previewJob.progress || 0) * 100)}%`; el.classList.add("busy"); }
+  else if (autoMode) { el.textContent = "prévia vai se atualizar…"; el.classList.add("stale"); }
+  else { el.textContent = S.previewUrl ? "prévia desatualizada" : "sem prévia ainda"; el.classList.add("stale"); }
+  $("#btnPlay").title = previewFresh() || !has ? "Tocar a prévia (espaço)" : "Gerar a prévia com as alterações e tocar (espaço)";
 }
 
 async function startPreview() {
   if (!S.cur?.has_words || !S.plan || previewFresh()) return;
   if (previewJob && previewJob.key === S.plan.key) return;
   const pid = S.cur.id, key = S.plan.key;
+  if (previewJob) { api(`/api/jobs/${previewJob.id}/cancel`, { method: "POST" }).catch(() => {}); previewJob = null; }
   let j;
   try { j = await api(`/api/projects/${pid}/render`, { method: "POST", body: { kind: "preview" } }); }
   catch (e) { toast(e.message, true); return; }
@@ -508,9 +530,8 @@ async function startPreview() {
     previewJob = null;
     if (n.status === "done") {
       S.previewKey = n.result.key; S.previewUrl = n.result.url;
-      swapPlaying();
       if (wantPlay) { wantPlay = false; playPreview(); }
-      if (!previewFresh()) autoPreview(); // mudou de novo enquanto renderizava
+      else if (autoMode && !previewFresh()) autoPreview(); // mudou de novo enquanto renderizava
     } else if (n.status === "error") { wantPlay = false; toast(`Erro na prévia: ${n.error}`, true); }
     updatePreviewState();
   };
@@ -518,19 +539,19 @@ async function startPreview() {
 }
 const autoPreview = debounce(startPreview, 1200);
 
-function swapPlaying() {
-  // se a prévia antiga estiver tocando, troca pela nova no mesmo ponto
-  const pl = $("#player");
-  if (pl.hidden || pl.paused) return;
-  const t = pl.currentTime;
-  swapping = true; pl.src = S.previewUrl;
-  pl.addEventListener("loadedmetadata", () => { pl.currentTime = t; pl.play().finally(() => { swapping = false; }); }, { once: true });
-}
+$("#btnRefresh").addEventListener("click", async () => { if (S.dirty) await saveNow(); startPreview(); });
+$("#autoPreview").checked = autoMode;
+$("#autoPreview").addEventListener("change", e => {
+  autoMode = e.target.checked;
+  try { localStorage.setItem("lp.autoPreview", autoMode ? "1" : "0"); } catch {}
+  if (autoMode && !previewFresh()) startPreview();
+  updatePreviewState();
+});
 function showStill() { $("#player").hidden = true; $("#frame").hidden = false; $("#hits").hidden = false; $("#btnPlay").classList.remove("playing"); requestFrame(); }
 async function playPreview() {
   const pl = $("#player");
   if (pl.getAttribute("src") !== S.previewUrl) pl.src = S.previewUrl;
-  pl.hidden = false; $("#frame").hidden = true; $("#hits").hidden = true; $("#wordPop").hidden = true;
+  pl.hidden = false; $("#frame").hidden = true; $("#hits").hidden = true; clearSel();
   const start = S.t >= S.cur.duration - 0.1 ? 0 : S.t;
   const go = () => { pl.currentTime = start; pl.play(); $("#btnPlay").classList.add("playing"); };
   if (pl.readyState >= 1) go(); else pl.addEventListener("loadedmetadata", go, { once: true });
@@ -547,7 +568,7 @@ async function togglePlay() {
 $("#btnPlay").addEventListener("click", togglePlay);
 $("#player").addEventListener("timeupdate", e => { S.t = e.target.currentTime; updateHead(); });
 $("#player").addEventListener("pause", e => {
-  if (swapping || e.target.hidden) return;
+  if (e.target.hidden) return;
   // pausou: volta para o quadro parado, onde dá para clicar nas palavras
   S.t = e.target.currentTime; showStill(); updateHead(); renderPop();
 });
@@ -559,7 +580,8 @@ window.addEventListener("keydown", e => {
   if (!S.cur) return;
   if (e.code === "Escape") { clearSel(); return; }
   if ((e.ctrlKey || e.metaKey) && e.code === "KeyZ") { e.preventDefault(); undoText(); return; }
-  if (e.code === "Space") { e.preventDefault(); togglePlay(); }
+  if (e.code === "Space") { e.preventDefault(); if (document.activeElement?.tagName === "BUTTON") document.activeElement.blur(); togglePlay(); }
+  if (e.code === "KeyR" && !e.ctrlKey && !e.metaKey && !previewFresh() && !previewJob) startPreview();
   if (e.code === "ArrowLeft") { e.preventDefault(); seek(S.t - (e.shiftKey ? 1 : 1 / (S.cur.fps || 30))); }
   if (e.code === "ArrowRight") { e.preventDefault(); seek(S.t + (e.shiftKey ? 1 : 1 / (S.cur.fps || 30))); }
 });
@@ -778,7 +800,7 @@ $("#hits").addEventListener("click", e => {
 function clearSel() {
   S.sel = []; S.anchor = null;
   $$("#hits .hit.sel").forEach(el => el.classList.remove("sel"));
-  $("#wordPop").hidden = true;
+  $("#wordPop").hidden = true; shiftPhone(0);
 }
 
 const selToks = () => {
@@ -828,9 +850,9 @@ function syncEffects() {
 function renderPop() {
   const pop = $("#wordPop");
   const pl = $("#player");
-  if (!S.sel.length || !S.plan || (!pl.hidden && !pl.paused)) { pop.hidden = true; return; }
+  if (!S.sel.length || !S.plan || (!pl.hidden && !pl.paused)) { pop.hidden = true; shiftPhone(0); return; }
   const toks = selToks();
-  if (!toks.length) { pop.hidden = true; return; }
+  if (!toks.length) { pop.hidden = true; shiftPhone(0); return; }
   pop.hidden = false;
   syncEffects();
   $("#wpCount").textContent = toks.length === 1 ? "1 palavra" : `${toks.length} palavras`;
@@ -854,9 +876,19 @@ function renderPop() {
     `<label class="sw sw-pick" title="Outra cor"><input type="color" value="${(cur || "#ffd60a").toLowerCase()}"></label>`;
   placePop();
 }
+function shiftPhone(px) {
+  const ph = $("#phone"); ph._shift = px; ph.style.transform = px ? `translateX(${-px}px)` : "";
+}
 function placePop() {
   const pop = $("#wordPop"), wrap = $(".phone-wrap"), phone = $("#phone");
-  const wr = wrap.getBoundingClientRect(), pr = phone.getBoundingClientRect();
+  const wr = wrap.getBoundingClientRect(), r0 = phone.getBoundingClientRect();
+  const s0 = phone._shift || 0, pw0 = pop.offsetWidth;
+  // posição do vídeo sem deslocamento; se o menu não cabe à direita mas cabe somando os dois lados, desloca
+  const natL = r0.left + s0, natR = r0.right + s0, need = pw0 + 26;
+  const shift = wr.right - natR >= need || natL - wr.left >= need ? 0
+    : Math.max(0, Math.min(natL - wr.left - 8, need - (wr.right - natR)));
+  if (shift !== s0) shiftPhone(shift);
+  const pr = { left: natL - shift, right: natR - shift, top: r0.top, height: r0.height, width: r0.width };
   const hs = S.hits.filter(h => S.sel.includes(h.wi));
   const pw = pop.offsetWidth, ph = pop.offsetHeight;
   let top = pr.top - wr.top + pr.height * 0.45 - ph / 2;
@@ -961,7 +993,8 @@ $("#btnRetrans").addEventListener("click", async () => {
 
 /* ------------------------------------------------------------ salvar preset */
 $("#btnResetStyle").addEventListener("click", async () => {
-  S.overrides = {}; syncControls();
+  if (!S.cur) return;
+  S.overrides = {}; syncControls(); syncEffects();
   await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { overrides: {} } }); refreshPlan();
 });
 $("#btnSavePreset").addEventListener("click", async () => {
