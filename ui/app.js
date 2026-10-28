@@ -727,7 +727,7 @@ const liveKey = i => { const s = sigAt(i); return s === "0" ? "0" : `${s}:${i}`;
 const liveTotal = () => { const segs = S.plan?.live?.segs; return segs?.length ? segs.at(-1)[1] + 1 : 0; };
 
 function liveReset() {
-  LV.gen++; LV.inflight.clear(); LV.reqs = 0; LV.want = LV.shown = LV.bg = null;
+  LV.gen++; LV.inflight.clear(); LV.reqs = 0; LV.want = LV.shown = LV.bg = LV.vt = LV.pendingSeek = null; LV.vfc = false;
   for (const p of LV.bmps.values()) p.then(ls => ls.forEach(l => l.bmp.close?.())).catch(() => {});
   LV.blobs.clear(); LV.bmps.clear(); LV.ready.clear();
   paintLive(null); paintBg(null);
@@ -744,7 +744,8 @@ function paintBg(img) {
 function paintPerson() {
   const c = $('#live canvas[data-l="person"]'), ctx = c.getContext("2d"), p = LV.person, pl = $("#player");
   ctx.clearRect(0, 0, c.width, c.height);
-  if (!p || pl.readyState < 2) return;
+  // não usa readyState: arrastando, a próxima busca já começou e ele cai, mas o quadro está na tela
+  if (!p || !pl.videoWidth) return;
   ctx.save();
   ctx.beginPath(); ctx.rect(p.x, p.y, p.w, p.h); ctx.clip();
   ctx.drawImage(pl, 0, 0, c.width, c.height);
@@ -867,7 +868,7 @@ async function liveFetch(idx) {
     if (gen === LV.gen) { keys.forEach(k => LV.inflight.delete(k)); LV.reqs--; }
   }
   if (gen !== LV.gen) return;
-  if (LV.want && LV.want !== LV.shown) liveDraw(frameAt(S.t));
+  if (LV.want && LV.want !== LV.shown) liveDraw(frameAt(shownTime()));
   livePump();
 }
 
@@ -883,9 +884,15 @@ async function fetchHits(t) {
 }
 const fetchHitsSoon = debounce(t => fetchHits(t), 60);
 // mostra o quadro S.t: vídeo + legenda ao vivo + palavras clicáveis
+/* A legenda acompanha o quadro que o vídeo está MOSTRANDO, não a agulha. Ao arrastar a agulha o vídeo
+   leva um tempo para buscar cada quadro; desenhar antes deixava o recorte da pessoa (feito do próprio
+   vídeo) desencontrado da legenda, e o texto de trás aparecia na frente. */
+const shownTime = () => LV.vt ?? S.t;   // instante do quadro que o vídeo está mostrando
 function showAt() {
   if (!S.cur) return;
-  liveDraw(frameAt(S.t));
+  const pl = $("#player");
+  if (!pl.seeking) { LV.vt = pl.readyState >= 1 ? pl.currentTime : S.t; liveDraw(frameAt(LV.vt)); paintPerson(); }
+  // buscando: quem desenha é o quadro novo quando ele aparecer (onVideoFrame / seeked)
   if (S.plan) fetchHitsSoon(S.t);
 }
 
@@ -894,7 +901,12 @@ function seek(t) {
   S.t = Math.max(0, Math.min(S.cur.duration - 0.01, t));
   const pl = $("#player");
   if (!pl.paused) pl.pause();
-  if (pl.readyState >= 1) pl.currentTime = S.t;
+  if (pl.readyState >= 1) {
+    // arrastando rápido: não empilha buscas; guarda só a última e aplica quando a atual terminar
+    if (pl.seeking) LV.pendingSeek = S.t;
+    else { LV.pendingSeek = null; pl.currentTime = S.t; }
+  }
+  armVideoFrame();
   updateHead(); showAt();
 }
 $("#scrub").addEventListener("input", e => seek(+e.target.value * S.cur.duration));
@@ -927,18 +939,23 @@ $("#btnPrev").addEventListener("click", () => seek(S.t - 1 / (S.cur?.fps || 30))
 $("#btnNext").addEventListener("click", () => seek(S.t + 1 / (S.cur?.fps || 30)));
 
 // tocando: a cada quadro do vídeo, desenha a legenda do mesmo instante
+// cada quadro que o vídeo apresenta (tocando ou depois de uma busca): legenda e recorte do MESMO quadro
 function onVideoFrame(now, md) {
+  LV.vfc = false;
   const pl = $("#player");
-  S.t = md?.mediaTime ?? pl.currentTime;
-  const i = frameAt(S.t);
-  updateHead(); liveDraw(i); paintPerson(); liveDecodeAhead(i); livePump();
+  LV.vt = md?.mediaTime ?? pl.currentTime;
+  const i = frameAt(LV.vt);
+  if (!pl.paused) { S.t = LV.vt; updateHead(); }
+  liveDraw(i); paintPerson(); liveDecodeAhead(i); livePump();
   if (!pl.paused) nextVideoFrame();
 }
 const nextVideoFrame = () => {
   const pl = $("#player");
-  if (pl.requestVideoFrameCallback) pl.requestVideoFrameCallback(onVideoFrame);
+  if (pl.requestVideoFrameCallback) { if (!LV.vfc) { LV.vfc = true; pl.requestVideoFrameCallback(onVideoFrame); } }
   else requestAnimationFrame(() => onVideoFrame());
 };
+// parado: espera o próximo quadro que o vídeo apresentar (o da busca) — só com requestVideoFrameCallback
+const armVideoFrame = () => { if ($("#player").requestVideoFrameCallback) nextVideoFrame(); };
 async function togglePlay() {
   if (!S.cur?.has_words) return;
   const pl = $("#player");
@@ -957,7 +974,12 @@ $("#player").addEventListener("pause", e => {
   updateHead(); showAt(); renderPop();
 });
 $("#player").addEventListener("ended", () => seek(firstCaptionTime()));
-$("#player").addEventListener("seeked", paintPerson);   // o quadro novo do vídeo já está pronto para o recorte
+$("#player").addEventListener("seeked", () => {
+  const pl = $("#player");
+  if (LV.pendingSeek != null) { const t = LV.pendingSeek; LV.pendingSeek = null; pl.currentTime = t; return; }
+  // busca terminada (mesmo quando o quadro não mudou): legenda e recorte do quadro que está na tela
+  LV.vt = pl.currentTime; liveDraw(frameAt(LV.vt)); paintPerson();
+});
 $("#player").addEventListener("click", () => $("#player").pause());
 
 /* ------------------------------------------------------------ atalhos e ajuda */
