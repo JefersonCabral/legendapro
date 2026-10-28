@@ -25,6 +25,14 @@ Atalhos no palco: `espaço` toca a prévia, `←`/`→` andam um quadro, `shift+
 | `~palavra` | palavra solo com pop |
 | `\|` | força uma nova cena |
 | `"…"` | trecho vira card de citação (presets com cards) |
+| `{#FFD60A}palavra` | cor da palavra |
+| `{-}palavra` | nunca vira destaque |
+| `{atras} … {/atras}` | texto atrás da pessoa, posição automática (pela silhueta) |
+| `{atras:dx,dy,escala} … {/atras}` | idem, com posição e tamanho escolhidos |
+
+## Texto atrás da pessoa
+
+Na interface: clique nas legendas da linha do tempo (shift/ctrl para várias) e use **Atrás da pessoa** no menu. O vídeo é recortado só nesses trechos, com o [Robust Video Matting](https://github.com/PeterL1n/RobustVideoMatting). O modelo não vem no repositório (licença GPL-3.0). Baixe `rvm_resnet50_fp32.torchscript` (release v1.0.0) para `models/`. Também é preciso ter o PyTorch com CUDA instalado. O recorte roda num processo separado, uma vez por trecho, e fica em `projects/<id>/matte/`.
 
 ## Como o motor decide
 
@@ -80,4 +88,4 @@ tools/       utilitários de análise (strip, clean, fontcmp)
 
 ## Requisitos
 
-Python 3.11+, ffmpeg no PATH, `pip install -r requirements.txt`. Com GPU NVIDIA, a transcrição usa CUDA (`int8_float16`) e o encode usa NVENC. Sem GPU, tudo roda na CPU.
+Python 3.11+, ffmpeg no PATH, `pip install -r requirements.txt`. Com GPU NVIDIA, a transcrição usa CUDA (`int8_float16`) e o encode usa NVENC. Sem GPU, tudo roda na CPU. O texto atrás da pessoa precisa também do PyTorch e do modelo em `models/` (veja acima).

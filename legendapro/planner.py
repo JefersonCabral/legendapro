@@ -662,7 +662,8 @@ class Planner:
                 if i in heroes:
                     grp = [i]
                     # número antes do herói entra junto ("30 seconds", "6 Person Team")
-                    if role and role[-1][0] != "hero" and re.search(r"\d", words[role[-1][1]].text) \
+                    # (o item anterior pode ser o corte de linha de outro herói, sem palavra)
+                    if role and role[-1][0] in ("support", "italic") and re.search(r"\d", words[role[-1][1]].text) \
                             and not L.ends_clause(words[role[-1][1]].text):
                         grp.insert(0, role.pop()[1])
                     for j in idx[k + 1:]:
@@ -858,6 +859,30 @@ class Planner:
         return sc
 
     def plan(self, words):
+        out = self._plan(words)
+        self.mark_behind(words, out)
+        return out
+
+    def mark_behind(self, words, plan):
+        """Cenas com palavras de um trecho {atras}: ficam atrás da pessoa (recorte do vídeo), com a
+        posição própria do trecho (dx, dy em fração da largura/altura) e o tamanho multiplicado."""
+        for sc in plan["scenes"]:
+            tag = next((f for l in sc["lines"] for t in l["tokens"] if t.get("wi") is not None
+                        for f in words[t["wi"]].flags if f.startswith("behind:")), None)
+            if tag is None:
+                continue
+            parts = tag.split(":")
+            if parts[2] == "auto":   # posição escolhida depois, pela silhueta (matte.place / server)
+                sc["behind"] = {"g": int(parts[1]), "dx": 0.0, "dy": 0.0, "s": 1.0, "auto": True}
+                continue
+            _, g, dx, dy, z = parts
+            sc["behind"] = {"g": int(g), "dx": float(dx), "dy": float(dy), "s": float(z)}
+            if float(z) != 1.0:
+                for l in sc["lines"]:
+                    for t in l["tokens"]:
+                        t["size"] = round(t["size"] * float(z), 5)
+
+    def _plan(self, words):
         rules = self.rules
         self._wid = {id(w): i for i, w in enumerate(words)}
         if rules.get("engine") == "phrase" and rules.get("layout_engine") == "fill":
@@ -911,7 +936,9 @@ class Planner:
                         and last_mode != "solo" and not first_clause and rng2.random() < solo_cfg["probability"] \
                         and all(len(words[i].text) <= 11 for i in cl):
                     mode = "solo"
-                elif e is not None and rules["stack_min_words"] <= n <= rules["stack_max_words"]:
+                elif e is not None and (rules["stack_min_words"] <= n <= rules["stack_max_words"]
+                                        or (n == 1 and "emph" in words[e].flags)):
+                    # palavra marcada à mão que ficou sozinha no trecho (várias marcadas seguidas) também é destaque
                     mode = "stack"
                 elif e is not None and n > rules["stack_max_words"]:
                     mode = "split"

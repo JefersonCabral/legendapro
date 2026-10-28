@@ -27,7 +27,7 @@ Uso básico e estrutura de pastas estão no `README.md`; aqui ficam o histórico
 | `ui/` | HTML/CSS/JS puro, tema escuro "sala de edição" |
 | `presets/*.json` | Estilos (`fonts`, `layout`, `colors`, `effects`, `rules`) |
 
-**Atenção:** `render.py` usa quebra de linha CRLF. Ao editar por script, preserve (`newline=''`).
+Todos os arquivos usam quebra de linha LF (out/2026; antes o `render.py` era CRLF).
 
 ## Transcrição
 
@@ -147,15 +147,46 @@ Presets novos: botão "Salvar como novo preset" na aba Estilo, ou copiar um JSON
 - Abrir com `LegendaPRO.bat`, que serve em http://127.0.0.1:7860.
 - Cada projeto fica em `projects/<id>/`: `input.*`, `meta.json`, `words.json`, `text.txt`, `thumb.jpg`, `preview.mp4`, `legendado.mp4`, `legenda-alpha.mov`.
 - Abas:
-  - **Texto**: botões de marcação, retranscrever.
-  - **Estilo**: miniaturas dos presets e controles ligados aos caminhos do JSON.
-  - **Exportar**: MP4 ou alpha, resolução, qualidade.
-- Atalhos no palco: espaço, ←/→, shift+←/→, Esc (limpa seleção), Ctrl+Z (desfaz edições de texto).
+  - **Texto**: texto visual sem códigos (`#rich`: cada palavra com a cor/efeito como vai sair, destaque automático sublinhado em âmbar, palavra falada acesa). Clicar/arrastar/shift+clique seleciona e abre o mesmo menu da palavra do vídeo. "Editar texto livre" mostra o `textarea` com os códigos. Retranscrever fica num grupo recolhido.
+  - **Estilo**: cartões de estilo com "Preset N" + nome curto (`presets.TAGLINES`, campo `tagline`); passar o mouse toca a prévia animada (`/api/presets/<n>/anim.mp4`, cache em `presets/_thumbs/<n>.mp4`). Controles em Básico/Avançado (`adv`, `lp.adv`) e por motor (`eng: classic|phrase`). "Altura na tela" (`layout.anchor_y`) saiu da UI: ao abrir o projeto, um ajuste antigo vira `offset_y` (mesmo efeito).
+  - **Exportar**: MP4 ou alpha, resolução, qualidade. `meta.exports_info[arquivo] = {key, preset, time, width, height, quality}`; se `key` ≠ chave do plano atual, mostra "desatualizado" e um ponto na aba. "Mostrar na pasta" = `POST /api/projects/<id>/reveal` (Explorer com o arquivo selecionado).
+- **Desfazer/refazer** (botões no topo, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y): cada passo guarda texto + preset + ajustes (`H` em `app.js`); arrastar um slider vira um passo só. Troca de estilo, "Restaurar estilo" e mover a legenda mostram aviso com "Desfazer".
+- Confirmações (apagar projeto/estilo, retranscrever) e a ajuda (tecla `?`) usam a janela `#modal` do app, nunca `confirm()`.
+- O projeto abre no primeiro quadro com a legenda inteira (`firstCaptionTime`, usa `scenes[i].wi` do `/plan`); dica sobre o vídeo na primeira vez (`lp.tipSeen`).
+- Tela inicial: grade de estilos (lembra o último, `lp.uploadPreset`); modelo de transcrição em "Opções avançadas", com nomes simples.
+- Preset apagado: projetos que o usavam caem no padrão (`presets.resolve_existing`).
+- Atalhos no palco: espaço, ←/→, shift+←/→, Esc (limpa seleção), Ctrl+Z / Ctrl+Shift+Z, `?` (ajuda).
 - **Edição direto no preview**: `/api/projects/<id>/hits?t=` devolve as caixas (0..1) das palavras visíveis (`Renderer.hits`). Cada token do plano tem `wi` (índice da palavra) e `/plan` devolve `words[i].span` (posição no `text.txt`, via `parse_markup(text, spans=True)`). Clicar na palavra abre um menu flutuante (`#wordPop`): corrigir texto, ligar/desligar efeitos, quebra e cor. Tudo vira marcação no texto, que continua sendo a única fonte da verdade.
 - **Cor por palavra**: marcação `{#RRGGBB}palavra` → flag `color:#RRGGBB` → token com `user_color` (vence o vermelho e é ignorado pela guarda de contraste). Ordem ao montar as marcações na UI: `!` por fora, cor por dentro (`buildTok` em `app.js`).
-- **Prévia em vídeo sob demanda** (pedido do dono: "atualizava a cada mudança"): o quadro parado mostra cada alteração na hora; o vídeo da prévia (`preview-<job>.mp4`, 720p) só é refeito no play, no botão "Atualizar prévia" (tecla R) ou, se o interruptor "Automática" estiver ligado (`localStorage lp.autoPreview`), 1,2 s depois de cada alteração. Pedir uma prévia nova cancela a anterior; uma prévia pronta nunca troca o vídeo que está tocando. `meta.preview = {file, key}` diz se está em dia.
+- **Prévia ao vivo** (pedido do dono: "editar em tempo real, como no CapCut/Premiere"; substituiu a prévia em MP4 e o quadro parado do servidor): o `<video>` toca o arquivo original (com som) e canvases por cima (`#live`) recebem a legenda que o motor desenha sob demanda, sem vídeo, em camadas RGBA — `normal`, `screen` (brilhos/raios, CSS `mix-blend-mode: screen`), `blend` (modo de mistura do estilo, via CSS) e `flash` (lavagem do clarão, só quando aparece); o gradiente vai uma vez só (`/live_bg.png`, camada `bg`). `Renderer.frame_layers(t)` + `LayerCanvas`; a guarda de contraste olha o quadro do vídeo no início da cena (`Renderer.guard_bg`). Fidelidade medida contra o quadro exportado: diferença média ≤ 0,24/255 e 0% de pixels com diferença > 24, nos 11 presets.
+  - `/plan` devolve `live = {fps 30, w, h, segs, blend, bg}`; `segs` = assinatura por faixa de quadros (hash do estilo + cenas/clarões ativos; "0" = vazio). O navegador guarda os quadros por `assinatura:índice`, então uma edição só refaz os quadros cujas cenas mudaram. `/live?f=a-b,c` devolve `[uint32][JSON][PNGs]` (só o recorte com desenho). Pede primeiro o quadro da tela, depois ~1–4 s à frente, depois o resto do vídeo em segundo plano; sincroniza no play com `requestVideoFrameCallback`.
+  - Medido (vídeo de 13 s): ~8 ms por quadro no servidor (4× o tempo real a 30 fps); editar uma palavra → legenda nova em ~90 ms; mudar estilo ~300 ms (inclui 120 ms de espera dos controles); troca de preset ~400 ms; play com a legenda em dia em 192/192 quadros.
+  - Vídeo que o navegador não toca (codec fora de h264/vp8/vp9/av1, áudio fora de aac/mp3/opus/vorbis/flac, ou contêiner mkv/avi): `job_proxy` gera `proxy.mp4` (H.264 ≤ 720p, NVENC) só para a prévia; `meta.playable` guarda a decisão. Exportação sempre usa o original.
+- **Texto atrás da pessoa** (pedido do dono, out/2026): marcação `{atras}` … `{/atras}` ou `{atras:dx,dy,escala}` (posição própria em fração da largura/altura, somada à geral; escala multiplica o `size` das palavras — no motor da caixa, a largura da caixa). As bordas viram quebra de legenda. `Planner.mark_behind` põe `sc["behind"] = {g, dx, dy, s}`.
+  - Recorte: **Robust Video Matting** ResNet50 (`models/rvm_resnet50_fp32.torchscript`, ~103 MB, GPL-3.0, fora do git), fp32 (em fp16 dá NaN na GTX 1650). Só nos quadros das cenas de trás (+1 s de saída, +0,4 s de aquecimento), uma vez, em `projects/<id>/matte/<quadro>.png` (cinza, resolução do vídeo, índice no fps do vídeo). ~10–12 quadros/s em 480p, ~14 em 1080p. Roda num **subprocesso** (`python -m legendapro.matte`) sem as pastas nvidia-cu12 no PATH: no mesmo processo do Whisper o PyTorch (CUDA 13) misturava versões do cuDNN (`CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH`). `meta.matte_v` sobe a cada recorte (entra na assinatura dos quadros da prévia). Vídeo com menos quadros que a conta pela duração: o último recorte é repetido.
+  - Exportação: vídeo → gradiente → texto de trás → pessoa por cima (pixels de antes do texto) → resto. No MOV transparente, onde a pessoa passa fica só o gradiente. A exportação recorta antes o que faltar.
+  - Prévia ao vivo: camadas `back_normal/back_screen/back_blend`, depois `person` (o navegador desenha o próprio `<video>` + gradiente mascarado pelo recorte, em meia resolução, a cada quadro do vídeo — `paintPerson`), depois a frente.
+  - UI: clicar numa legenda da linha do tempo seleciona as palavras dela (shift = intervalo, ctrl = soma); botão "Atrás da pessoa" no menu (cada legenda vira um trecho próprio, nasce a ~1/3 da altura e 1,4× maior, porque na altura normal a pessoa cobre o texto); arrastar uma palavra de trás move só o trecho; tamanho no menu. O recorte começa sozinho e o progresso aparece ao lado do tempo; trechos de trás ficam listrados na linha do tempo.
+  - **Posição automática** (padrão ao marcar pela interface; `{atras}` sem números): `matte.place` olha a silhueta média da pessoa durante cada legenda e escolhe altura, centro (no meio da pessoa) e tamanho (0,7–2,1×). Mira em ~1/3 do bloco coberto, dentro da tela. Penaliza linha quase toda escondida, pesando pelo tamanho da letra (a palavra de destaque conta mais). `server.place_behind` aplica isso no plano; sem recorte ainda, usa um palpite (1/3 da altura, 1,4×) e refaz quando o recorte fica pronto (`matte_v` entra na chave do plano). Arrastar ou mudar o tamanho grava números (vira manual); "Posicionar automaticamente" volta para `{atras}`.
+  - Testado em 3 vídeos reais (mulher em close + plano aberto, "PARTE 1" de corpo inteiro, senhor) × 11 presets. Com posição fixa, o close deixava só 17% do texto visível em média; com a automática, ~56% em média (39% no pior estilo). Em todos os casos nenhum pixel de texto passa por cima da pessoa (pior erro 1,6/255), e a prévia fica igual à exportação (≤ 0,3/255).
+  - Limite conhecido: num close em que a cabeça é mais larga que a palavra de destaque em qualquer altura (ex.: Preset 6, que tem um bloco de 3 linhas, no vídeo da mulher), o destaque fica quase todo escondido. Nesse caso, ajustar à mão.
+  - **Grade de quadros:** exportação (`render_video`) e recorte decodificam com `-vf fps=<fps>` e o recorte escolhe o quadro por número (`select=gte(n\,k)`), nunca por `-ss`. Em vídeo de taxa variável (ex.: o "senhorvideo", 24 quadros reais declarados a 60 fps) o `-ss` desalinhava 1–2 quadros. Verificado: recorte k = quadro k da exportação (diferença 0).
+- Revisão independente (out/2026), 12 itens corrigidos:
+  - a prévia recarrega o plano quando o servidor responde outra assinatura (antes entrava em laço de pedidos);
+  - `refreshPlan` descarta resposta velha ou de outro projeto;
+  - trocar de projeto salva antes a digitação pendente;
+  - guarda de contraste com trava por renderizador (threads da prévia);
+  - recorte sem cache na exportação (cache da prévia em uint8);
+  - a fila do recorte é recalculada dentro do `GPU_LOCK`;
+  - mudanças de trecho chegando antes do plano novo ficam pendentes (`pendingGroup`);
+  - cortes de etiquetas vizinhas são unidos (`mergeCuts`);
+  - o `meta.json` é relido antes de gravar nos trabalhos longos.
+- `meta.json`: leitura e gravação sob `_meta_lock` (no Windows, trocar o arquivo enquanto outra requisição lê dava "Acesso negado" e a alteração se perdia).
 - **Layout**: colunas 220/370 px até 1440 px de largura; menu da palavra empurra o vídeo para o lado quando não cabe ao lado dele (`shiftPhone`); legenda da timeline mostra só os tipos de cena do vídeo atual; grupos de controles vazios para o estilo somem; estilos em grade de 3.
-- A legenda das cores da timeline fica logo abaixo dela; o texto da aba Estilo explica que os ajustes valem para o vídeo inteiro e só chegam ao arquivo exportado depois de renderizar de novo.
+- Linha do tempo: cada bloco mostra o texto da legenda; pontos âmbar marcam as palavras em destaque.
+- Card só aparece no menu quando o estilo tem `rules.cards.enabled` (hoje só o Preset 1); Solo e Card somem nos estilos do motor "frase".
+- Contraste: `--muted #a39789`, `--faint #7e7369`; textos de ajuda ≥ 11 px.
+- **Análise de usabilidade (out/2026)** feita e aplicada por completo. Verificação: bateria no navegador com os 11 presets (todas as palavras no texto visual, cada efeito muda texto e plano, desfazer volta exato, cor, 0 erros JS), envio + transcrição, exportação + selo desatualizado, prévia, arrastar, apagar com confirmação, salvar/apagar estilo.
 
 ## Vídeos já processados
 

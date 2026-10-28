@@ -15,6 +15,16 @@ LEGACY = {"galho": "preset-1", "desculpa": "preset-2", "brilho": "preset-3",
 BUILTIN = set(LEGACY.values())   # presets das referências: não podem ser apagados
 DEFAULT = "preset-2"
 
+# nome curto que diz como o estilo é (aparece embaixo do "Preset N" na interface)
+TAGLINES = {
+    "preset-1": "Serifada vermelha com brilho", "preset-2": "Vermelho piscando e elipse",
+    "preset-3": "Destaque branco gigante", "preset-4": "Amarelo que sobe com borrão",
+    "preset-5": "Corte seco, 1–2 palavras", "preset-6": "Holofote amarelo com raios",
+    "preset-7": "Frase empilhada", "preset-8": "Frase empilhada, fundo claro",
+    "preset-9": "Rosa em modo diferença", "preset-10": "Caixa que se preenche",
+    "preset-11": "Destaque que desliza",
+}
+
 
 def safe_name(s):
     s = re.sub(r"[^a-z0-9_-]+", "-", s.lower().strip()).strip("-")
@@ -24,6 +34,12 @@ def safe_name(s):
 def resolve(name):
     n = safe_name(name or DEFAULT)
     return LEGACY.get(n, n)
+
+
+def resolve_existing(name):
+    """Como resolve(), mas um preset que foi apagado volta para o padrão."""
+    n = resolve(name)
+    return n if os.path.isfile(os.path.join(PRESET_DIR, n + ".json")) else DEFAULT
 
 
 def natural_key(name):
@@ -44,9 +60,11 @@ def load_all():
     out = []
     for n in names():
         try:
-            out.append(load(n))
+            p = load(n)
         except Exception:
-            pass
+            continue
+        p.setdefault("tagline", TAGLINES.get(p.get("name", n), ""))
+        out.append(p)
     return out
 
 

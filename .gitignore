@@ -13,3 +13,6 @@ presets/_thumbs/
 *.mov
 *.mkv
 *.webm
+
+# modelos baixados (RVM é GPL-3.0, fica fora do repositório)
+models/

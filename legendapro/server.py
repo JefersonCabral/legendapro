@@ -5,22 +5,25 @@
 import copy
 import hashlib
 import json
+import math
 import mimetypes
 import os
 import re
 import shutil
+import struct
 import subprocess
 import threading
 import time
 import traceback
 import uuid
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
 import numpy as np
 
-from . import presets, transcript
+from . import matte, presets, transcript
 from .gpu import cuda_available, nvenc_available
 from .planner import Planner
 from .render import ROOT, FONT_DIR, Renderer, probe, render_video, Cancelled
@@ -70,27 +73,40 @@ def pdir(pid):
     return d
 
 
+# No Windows, trocar o meta.json falha ("Acesso negado") se outra requisição o estiver lendo no mesmo
+# instante — e a prévia ao vivo lê o tempo todo. Leitura e gravação passam pela mesma trava.
+_meta_lock = threading.RLock()
+
+
 def read_meta(pid):
-    return json.load(open(os.path.join(pdir(pid), "meta.json"), encoding="utf-8"))
+    with _meta_lock, open(os.path.join(pdir(pid), "meta.json"), encoding="utf-8") as f:
+        return json.load(f)
 
 
 def write_meta(pid, meta):
     p = os.path.join(pdir(pid), "meta.json")
-    tmp = p + ".tmp"
-    json.dump(meta, open(tmp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-    os.replace(tmp, p)
+    with _meta_lock:
+        tmp = f"{p}.{threading.get_ident()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=1)
+        for k in range(20):   # antivírus/indexador do Windows às vezes segura o arquivo por um instante
+            try:
+                os.replace(tmp, p)
+                return
+            except PermissionError:
+                if k == 19:
+                    raise
+                time.sleep(0.025)
 
 
 def project_summary(pid):
     m = read_meta(pid)
-    m["preset"] = presets.resolve(m.get("preset"))
+    m["preset"] = presets.resolve_existing(m.get("preset"))
     d = pdir(pid)
     m["has_words"] = os.path.exists(os.path.join(d, "words.json"))
-    m["exports"] = sorted(f for f in os.listdir(d) if f.startswith("legendado") or f.startswith("legenda-alpha"))
-    pv = m.get("preview") or {}
-    m["has_preview"] = bool(pv.get("file")) and os.path.exists(os.path.join(d, pv["file"]))
-    if not m["has_preview"]:
-        m.pop("preview", None)
+    m["exports"] = sorted(f for f in os.listdir(d) if (f.startswith("legendado") or f.startswith("legenda-alpha"))
+                          and ".part" not in f)
+    m["exports_info"] = {f: i for f, i in (m.get("exports_info") or {}).items() if f in m["exports"]}
     return m
 
 
@@ -108,20 +124,50 @@ def words_to_text(words):
 
 def project_style(pid):
     meta = read_meta(pid)
-    base = load_preset(meta.get("preset", presets.DEFAULT))
+    base = load_preset(presets.resolve_existing(meta.get("preset")))
     return deep_merge(base, meta.get("overrides", {}))
 
 
 _plan_cache = {}
 
 
+def place_behind(plan, style, meta, d):
+    """Trechos {atras} automáticos: posição e tamanho pela silhueta da pessoa (matte.place). Sem recorte
+    ainda, usa um palpite (1/3 da altura, 1,4×) e refaz quando o recorte fica pronto (matte_v na chave)."""
+    autos = {sc["behind"]["g"] for sc in plan["scenes"] if (sc.get("behind") or {}).get("auto")}
+    if not autos:
+        return
+    res = matte.place(plan, style, meta["width"], meta["height"],
+                      lambda t, w, h: matte.load(d, t, meta["fps"], w, h))
+    lay = style["layout"]
+    guess = {"dx": 0.0, "dy": round(0.32 - lay.get("anchor_y", 0.6) - lay.get("offset_y", 0.0), 3), "s": 1.4}
+    first = {}
+    for i, sc in enumerate(plan["scenes"]):
+        b = sc.get("behind")
+        if b and b.get("auto"):
+            r = res.get(i, guess)
+            b.update(r, placed=i in res)
+            first.setdefault(b["g"], b)
+            for l in sc["lines"]:
+                for t in l["tokens"]:
+                    t["size"] = round(t["size"] * r["s"], 5)
+    # para a interface: o trecho mostra a posição da 1ª legenda dele (arrastar parte dela)
+    for g in plan.get("groups", []):
+        if g.get("auto") and g["g"] in first:
+            b = first[g["g"]]
+            g.update(dx=b["dx"], dy=b["dy"], s=b["s"], placed=b["placed"])
+
+
 def project_plan(pid):
     d = pdir(pid)
     raw = transcript.load(os.path.join(d, "words.json"))
-    text = open(os.path.join(d, "text.txt"), encoding="utf-8").read()
+    with _meta_lock, open(os.path.join(d, "text.txt"), encoding="utf-8") as f:   # nunca no meio de uma gravação
+        text = f.read()
     style = project_style(pid)
-    key = hashlib.sha1((text + json.dumps(style, sort_keys=True) +
-                        str(os.path.getmtime(os.path.join(d, "words.json")))).encode()).hexdigest()
+    meta = read_meta(pid)
+    # o recorte entra na chave: a posição automática do texto atrás depende dele
+    key = hashlib.sha1((text + json.dumps(style, sort_keys=True) + str(os.path.getmtime(os.path.join(d, "words.json")))
+                        + f"|m{meta.get('matte_v', 0)}").encode()).hexdigest()
     if key in _plan_cache:
         return key, style, _plan_cache[key]
     words = transcript.align_text(text, raw) if text.strip() else raw
@@ -131,23 +177,136 @@ def project_plan(pid):
     # palavras que viraram o destaque do estilo (herói / serifada de ênfase), para o botão "Destaque"
     hero = {t["wi"] for sc in plan["scenes"] for l in sc["lines"] for t in l["tokens"]
             if t.get("anim") == "hero" or (t["role"] == "serif" and sc["mode"] == "stack")}
-    plan["words"] = [{"start": round(w.start, 3), "end": round(w.end, 3), "span": sp, "emph": i in hero}
+    plan["words"] = [{"start": round(w.start, 3), "end": round(w.end, 3), "span": sp, "emph": i in hero,
+                      # trecho {atras} da palavra (índice em plan["groups"]) ou None
+                      "bg": next((int(f.split(":")[1]) for f in w.flags if f.startswith("behind:")), None)}
                      for i, (w, sp) in enumerate(zip(words, spans))]
+    plan["groups"] = transcript.behind_groups(text)
+    place_behind(plan, style, meta, d)
     _plan_cache.clear()
     _plan_cache[key] = plan
     return key, style, plan
 
 
-_renderers = {}
+# ---------------------------------------------------------------- prévia ao vivo
+# O navegador toca o vídeo original e desenha por cima a legenda, que o motor manda em camadas
+# transparentes (só o recorte com texto, em PNG). Cada quadro tem uma assinatura que só muda quando
+# muda o que aparece nele: depois de uma edição, a interface pede de novo apenas esses quadros.
+
+LIVE_FPS = 30
+_live = {}        # (pid, key) -> Renderer no tamanho da prévia, com transparência
+_live_info = {}   # key -> assinaturas dos quadros
+_vframes = {}     # (pid, t, w) -> quadro do vídeo (para a guarda de contraste)
+_live_lock = threading.Lock()
+_cache_lock = threading.Lock()   # _live_info e _vframes (várias threads da prévia ao mesmo tempo)
+_live_pool = ThreadPoolExecutor(max(2, min(6, (os.cpu_count() or 4) - 1)))
 
 
-def renderer_for(pid, key, style, plan):
-    meta = read_meta(pid)
-    rk = (pid, key)
-    if rk not in _renderers:
-        _renderers.clear()
-        _renderers[rk] = Renderer(style, plan, meta["width"], meta["height"])
-    return _renderers[rk]
+def live_size(meta):
+    w = min(540, meta["width"]) // 2 * 2
+    return w, int(round(meta["height"] * w / meta["width"])) // 2 * 2
+
+
+def live_info(key, style, plan, duration, mv=0):
+    """Assinatura de cada quadro: estilo + cenas e clarões ativos nele. "0" = quadro vazio.
+    mv = versão do recorte da pessoa: quando ele fica pronto, os quadros com texto atrás mudam."""
+    with _cache_lock:
+        if (key, mv) in _live_info:
+            return _live_info[(key, mv)]
+    n = int(math.ceil(duration * LIVE_FPS))
+    act = [[] for _ in range(n)]
+    for sc in plan["scenes"]:
+        h = hashlib.sha1(json.dumps(sc, sort_keys=True, default=str).encode()).hexdigest()[:12]
+        if sc.get("behind"):
+            h += f"m{mv}"
+        for i in range(max(0, math.ceil((sc["t_in"] - 1e-6) * LIVE_FPS)), min(n, math.floor((sc["t_out"] + 1.0) * LIVE_FPS) + 1)):
+            act[i].append(h)
+    D = style["effects"].get("flash", {}).get("duration", 0.4)
+    for tf in plan.get("flashes", []):
+        t0 = tf - D * 0.35
+        for i in range(max(0, math.ceil(t0 * LIVE_FPS)), min(n, math.floor((t0 + D) * LIVE_FPS) + 1)):
+            act[i].append(f"flash{tf:.3f}")
+    sty = json.dumps(style, sort_keys=True, default=str)
+    sig, segs = [], []
+    for i in range(n):
+        s = hashlib.sha1((sty + "|".join(act[i])).encode()).hexdigest()[:12] if act[i] else "0"
+        sig.append(s)
+        if segs and segs[-1][2] == s:
+            segs[-1][1] = i
+        else:
+            segs.append([i, i, s])
+    info = {"sig": sig, "segs": segs}
+    with _cache_lock:
+        while len(_live_info) > 8:
+            _live_info.pop(next(iter(_live_info)))
+        _live_info[(key, mv)] = info
+    return info
+
+
+def video_frame(pid, src, t, w, h):
+    import cv2
+    k = (pid, round(t, 3), w)
+    with _cache_lock:
+        f = _vframes.get(k)
+    if f is None:
+        meta = read_meta(pid)
+        f = cv2.resize(grab_frame(src, t, meta["width"], meta["height"]), (w, h), interpolation=cv2.INTER_AREA)
+        with _cache_lock:
+            while len(_vframes) >= 48:
+                _vframes.pop(next(iter(_vframes)))
+            _vframes[k] = f
+    return f
+
+
+def live_renderer(pid, key, style, plan):
+    with _live_lock:
+        R = _live.get((pid, key))
+        if R is None:
+            meta = read_meta(pid)
+            w, h = live_size(meta)
+            R = Renderer(style, plan, w, h, alpha=True)
+            src = os.path.join(pdir(pid), meta["file"])
+            R.guard_bg = lambda t: video_frame(pid, src, t, w, h)
+            R.matte = lambda t, d=pdir(pid), fps=meta["fps"]: matte.load(d, t, fps, w, h)
+            if len(_live) > 3:
+                _live.pop(next(iter(_live)))
+            _live[(pid, key)] = R
+        return R
+
+
+def live_frame(R, i):
+    """Camadas de um quadro: [(nome, x, y, w, h, png)] só com o recorte que tem desenho."""
+    import cv2
+    out = []
+    for name, img in R.frame_layers(i / LIVE_FPS).items():
+        x, y, w, h = cv2.boundingRect((img[..., 3] > 0).astype(np.uint8))
+        if w == 0:
+            continue
+        crop = cv2.cvtColor(np.ascontiguousarray(img[y:y + h, x:x + w]), cv2.COLOR_RGBA2BGRA)
+        if name == "person":   # recorte em meia resolução (o navegador amplia suave); ~4× mais leve
+            crop = cv2.resize(crop, (max(1, w // 2), max(1, h // 2)), interpolation=cv2.INTER_AREA)
+        out.append((name, x, y, w, h, cv2.imencode(".png", crop, [cv2.IMWRITE_PNG_COMPRESSION, 1])[1].tobytes()))
+    return out
+
+
+# vídeo que o navegador toca na prévia: o próprio arquivo ou, se ele não tocar no navegador, uma cópia leve
+PLAYABLE = {"video": {"h264", "vp8", "vp9", "av1"}, "audio": {"aac", "mp3", "opus", "vorbis", "flac"}}
+
+
+def video_source(pid, meta):
+    if "playable" not in meta:
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name", "-of", "json",
+                            os.path.join(pdir(pid), meta["file"])], capture_output=True, text=True)
+        streams = json.loads(r.stdout or "{}").get("streams", [])
+        playable = os.path.splitext(meta["file"])[1].lower() in (".mp4", ".m4v", ".mov", ".webm") and all(
+            s.get("codec_name") in PLAYABLE[s["codec_type"]] for s in streams if s.get("codec_type") in PLAYABLE)
+        with _meta_lock:
+            m = read_meta(pid)
+            m["playable"] = meta["playable"] = playable
+            write_meta(pid, m)
+    if meta["playable"]:
+        return meta["file"]
+    return "proxy.mp4" if os.path.exists(os.path.join(pdir(pid), "proxy.mp4")) else None
 
 
 def grab_frame(path, t, W, H):
@@ -215,6 +374,63 @@ def preset_thumb(name):
     data = jpeg(img, 90)
     open(out, "wb").write(data)
     return data
+
+
+_anim_lock = threading.Lock()
+
+
+def preset_anim(name):
+    """Prévia animada do preset (a frase de exemplo entrando e saindo), mostrada ao passar o mouse
+    na miniatura. MP4 pequeno em cache até o preset mudar; devolve o caminho do arquivo."""
+    import cv2
+    name = presets.resolve(name)
+    cache_dir = os.path.join(PRESET_DIR, "_thumbs")
+    os.makedirs(cache_dir, exist_ok=True)
+    p = os.path.join(PRESET_DIR, name + ".json")
+    out = os.path.join(cache_dir, name + ".mp4")
+    with _anim_lock:
+        if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(p):
+            return out
+        style = deep_merge(load_preset(name), {"layout": {"anchor_y": 0.5, "offset_x": 0, "offset_y": 0},
+                                               "effects": {"flash": {"enabled": False}}})
+        words = [transcript.Word(t, s, s + 0.22) for t, s in SAMPLE]
+        words[4].flags.add("emph")
+        plan = Planner(style).plan(words)
+        W, H, fps = 540, 960, 24
+        yy = np.linspace(0, 1, H)[:, None, None]
+        ink = style["colors"]["text"].lstrip("#")
+        if sum(int(ink[i:i + 2], 16) for i in (0, 2, 4)) < 3 * 110:
+            bg = (np.array([246, 246, 246]) * (1 - yy) + np.array([228, 228, 228]) * yy).astype(np.uint8)
+        else:
+            bg = (np.array([34, 30, 28]) * (1 - yy) + np.array([12, 11, 10]) * yy).astype(np.uint8)
+        bg = np.repeat(bg, W, axis=1)
+        R = Renderer(style, plan, W, H)
+        end = max((sc["t_out"] for sc in plan["scenes"]), default=2.0)
+        frames = [R.frame(i / fps, bg) for i in range(int(min(end + 0.45, 4.5) * fps))]
+        # recorte fixo que cabe o texto de todos os quadros, na proporção da miniatura (340 × 380)
+        mask = np.zeros((H, W), bool)
+        for f in frames:
+            mask |= (f.astype(np.int16) - bg).max(axis=2) > 40
+        ys, xs = np.where(mask)
+        cy = (ys.min() + ys.max()) // 2 if len(ys) else H // 2
+        cx = W // 2
+        k = 1.0
+        if len(xs):
+            k = max(1.0, (max(cx - xs.min(), xs.max() - cx) + 14) / 170, ((ys.max() - ys.min()) / 2 + 24) / 190)
+        hw, hh = min(int(170 * k), W // 2), min(int(190 * k), H // 2)
+        y0 = max(0, min(H - 2 * hh, cy - hh))
+        tmp = out + ".part.mp4"
+        enc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "340x380",
+                                "-r", str(fps), "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "24",
+                                "-movflags", "+faststart", tmp], stdin=subprocess.PIPE)
+        for f in frames:
+            crop = np.ascontiguousarray(f[y0:y0 + 2 * hh, cx - hw:cx + hw])
+            enc.stdin.write(cv2.resize(crop, (340, 380), interpolation=cv2.INTER_AREA).tobytes())
+        enc.stdin.close()
+        if enc.wait() != 0:
+            raise RuntimeError("falha ao gerar a prévia animada do preset")
+        os.replace(tmp, out)
+        return out
 
 
 # ---------------------------------------------------------------- prévia dos efeitos por preset
@@ -315,9 +531,11 @@ def job_transcribe(pid, model):
             words = transcript.transcribe(os.path.join(d, meta["file"]), model, meta.get("language", "pt"), prog)
         transcript.save_json(words, os.path.join(d, "words.json"))
         open(os.path.join(d, "text.txt"), "w", encoding="utf-8").write(words_to_text(words))
-        meta["status"] = "transcrito"
-        meta["model"] = model
-        write_meta(pid, meta)
+        with _meta_lock:   # relê: a transcrição demora e o meta pode ter mudado (exportações, recorte)
+            meta = read_meta(pid)
+            meta["status"] = "transcrito"
+            meta["model"] = model
+            write_meta(pid, meta)
         return {"words": len(words)}
     return new_job("transcribe", pid, fn)
 
@@ -330,13 +548,7 @@ def job_render(pid, kind, opts):
         src = os.path.join(d, meta["file"])
         alpha = kind == "alpha"
         size = None
-        if kind == "preview":
-            # leve, para refazer sozinha a cada alteração; nome novo a cada vez para não
-            # sobrescrever o arquivo que o navegador ainda pode estar tocando
-            h = min(720, meta["height"])
-            size = (int(meta["width"] * h / meta["height"]) // 2 * 2, h)
-            out = os.path.join(d, f"preview-{job['id']}.mp4")
-        elif alpha:
+        if alpha:
             out = os.path.join(d, "legenda-alpha.mov")
         else:
             res = opts.get("resolution")
@@ -347,16 +559,20 @@ def job_render(pid, kind, opts):
         if alpha:
             size = (meta["width"], meta["height"])
         tmp = out + f".{job['id']}.part" + os.path.splitext(out)[1]
-        job["message"] = "Renderizando prévia…" if kind == "preview" else "Renderizando…"
+        # texto atrás da pessoa: recorta antes o que faltar (só os trechos marcados)
+        ensure_matte(pid, meta, plan, job)
+        job["message"] = "Renderizando…"
 
         def prog(k, n):
             job["progress"] = round(k / max(n, 1), 3)
             job["message"] = f"{k}/{n} frames"
+        has_back = any(sc.get("behind") for sc in plan["scenes"])
         try:
             render_video(style, plan, tmp, video=None if alpha else src, size=size,
                          fps=meta["fps"], duration=meta["duration"], alpha=alpha,
                          progress=prog, cancel=lambda: job["cancel"],
-                         crf=23 if kind == "preview" else int(opts.get("quality", 18)))
+                         crf=int(opts.get("quality", 18)),
+                         matte=(lambda t, W, H: matte.load(d, t, meta["fps"], W, H, cache=False)) if has_back else None)
             os.replace(tmp, out)
         except BaseException:
             try:
@@ -365,18 +581,95 @@ def job_render(pid, kind, opts):
                 pass
             raise
         name = os.path.basename(out)
-        if kind == "preview":
+        # com que versão do texto/estilo foi exportado (a interface avisa quando ficou desatualizado)
+        with _meta_lock:
             meta = read_meta(pid)
-            meta["preview"] = {"file": name, "key": key}
+            w, h = size or (meta["width"], meta["height"])
+            meta.setdefault("exports_info", {})[name] = {
+                "key": key, "preset": presets.resolve_existing(meta.get("preset")), "time": time.time(), "width": w, "height": h,
+                "quality": None if alpha else int(opts.get("quality", 18))}
             write_meta(pid, meta)
-            for f in os.listdir(d):   # prévias antigas (pode falhar se o navegador ainda segura o arquivo)
-                if f.startswith("preview") and f.endswith(".mp4") and ".part" not in f and f != name:
-                    try:
-                        os.remove(os.path.join(d, f))
-                    except OSError:
-                        pass
         return {"file": name, "key": key, "url": f"/files/{pid}/{name}?v={int(time.time())}"}
     return new_job(kind, pid, fn)
+
+
+def matte_need(pid, meta, plan):
+    """Faixas de quadros com texto atrás da pessoa que ainda não têm recorte."""
+    nframes = int(round(meta["duration"] * meta["fps"]))
+    return matte.missing(pdir(pid), matte.frame_ranges(plan, meta["fps"], nframes))
+
+
+def ensure_matte(pid, meta, plan, job):
+    """Recorta a pessoa nas faixas que faltam (GPU), mostrando o progresso no job."""
+    need = matte_need(pid, meta, plan)
+    if not need:
+        return False
+    if not matte.available():
+        raise RuntimeError("modelo de recorte não encontrado (models/rvm_resnet50_fp32.torchscript)")
+    job["message"] = "Recortando a pessoa…"
+
+    def prog(f):
+        job["progress"] = round(f, 3)
+        job["message"] = f"Recortando a pessoa… {int(f * 100)}%"
+    try:
+        with GPU_LOCK:
+            # outro trabalho pode ter recortado enquanto este esperava a GPU: recalcula o que falta
+            need = matte_need(pid, meta, plan)
+            if not need:
+                return False
+            matte.run_worker(pdir(pid), os.path.join(pdir(pid), meta["file"]), meta["width"], meta["height"], meta["fps"],
+                             need, prog, cancel=lambda: job["cancel"])
+    except InterruptedError:
+        raise Cancelled()
+    with _meta_lock:
+        m = read_meta(pid)
+        m["matte_v"] = m.get("matte_v", 0) + 1
+        write_meta(pid, m)
+    return True
+
+
+def job_matte(pid):
+    def fn(job):
+        meta = read_meta(pid)
+        key, style, plan = project_plan(pid)
+        ensure_matte(pid, meta, plan, job)
+        return {"ok": True}
+    return new_job("matte", pid, fn)
+
+
+def job_proxy(pid):
+    """Cópia leve (H.264 até 720p) para a prévia, quando o navegador não toca o vídeo original."""
+    from .gpu import nvenc_available
+
+    def fn(job):
+        d = pdir(pid)
+        meta = read_meta(pid)
+        job["message"] = "Preparando o vídeo para a prévia…"
+        out, tmp = os.path.join(d, "proxy.mp4"), os.path.join(d, f"proxy.{job['id']}.part.mp4")
+        venc = ["-c:v", "h264_nvenc", "-cq", "23"] if nvenc_available() else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+        p = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-i", os.path.join(d, meta["file"]), "-map", "0:v:0", "-map", "0:a:0?",
+                              "-vf", "scale=-2:'min(720,ih)'", *venc, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
+                              "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", tmp],
+                             stdout=subprocess.PIPE, text=True)
+        for line in p.stdout:
+            v = line.strip().split("=")[-1]
+            if line.startswith("out_time_us=") and v.isdigit():
+                job["progress"] = round(min(0.99, int(v) / 1e6 / max(meta["duration"], 0.1)), 3)
+        if p.wait() != 0:
+            raise RuntimeError("não consegui preparar o vídeo para a prévia")
+        os.replace(tmp, out)
+        return {"file": "proxy.mp4"}
+    return new_job("proxy", pid, fn)
+
+
+def ensure_source(pid, meta):
+    """Arquivo da prévia; se precisar da cópia leve, começa (ou acompanha) o trabalho que a gera."""
+    src = video_source(pid, meta)
+    job = None
+    if src is None:
+        job = next((j for j in JOBS.values() if j["project"] == pid and j["kind"] == "proxy" and j["status"] == "running"), None)
+        job = job or job_proxy(pid)
+    return src, job
 
 
 # ---------------------------------------------------------------- HTTP
@@ -515,8 +808,8 @@ class Handler(BaseHTTPRequestHandler):
         name = safe_name(title)
         data["name"] = name
         data["title"] = title
-        if b.get("description"):
-            data["description"] = b["description"]
+        data["description"] = b.get("description") or ""
+        data["tagline"] = (b.get("description") or "Estilo personalizado")[:40]
         p = os.path.join(PRESET_DIR, name + ".json")
         if os.path.exists(p) and not b.get("overwrite"):
             return self.send_json({"error": f"já existe um preset chamado '{name}'"}, 409)
@@ -539,6 +832,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def api_preset_thumb(self, q, name):
         self.send_bytes(preset_thumb(unquote(name)), "image/jpeg")
+
+    def api_preset_anim(self, q, name):
+        self.send_file(preset_anim(unquote(name)))
 
     def api_projects(self, q):
         items = []
@@ -576,8 +872,9 @@ class Handler(BaseHTTPRequestHandler):
         open(os.path.join(d, "thumb.jpg"), "wb").write(thumb)
         meta = {"id": pid, "name": os.path.splitext(name)[0], "file": "input" + ext, "width": W, "height": H,
                 "fps": fps, "duration": dur, "created": time.time(), "status": "novo",
-                "preset": presets.resolve(q.get("preset")), "overrides": {}, "language": "pt"}
+                "preset": presets.resolve_existing(q.get("preset")), "overrides": {}, "language": "pt"}
         open(os.path.join(d, "meta.json"), "w", encoding="utf-8").write(json.dumps(meta, ensure_ascii=False))
+        ensure_source(pid, read_meta(pid))   # cópia leve para a prévia, se o navegador não tocar o original
         job = job_transcribe(pid, q.get("model") or transcript.DEFAULT_MODEL)
         self.send_json({"project": project_summary(pid), "job": job_public(job)})
 
@@ -590,6 +887,15 @@ class Handler(BaseHTTPRequestHandler):
         running = [j for j in JOBS.values() if j["project"] == pid and j["status"] == "running"
                    and j["kind"] == "transcribe"]
         m["job"] = job_public(running[-1]) if running else None
+        src, pj = ensure_source(pid, read_meta(pid))
+        m["source"] = f"/files/{pid}/{src}" if src else None
+        m["source_job"] = job_public(pj) if pj else None
+        for f in os.listdir(d):   # sobras da antiga prévia em MP4
+            if f.startswith("preview") and f.endswith(".mp4"):
+                try:
+                    os.remove(os.path.join(d, f))
+                except OSError:
+                    pass
         self.send_json(m)
 
     def api_project_delete(self, q, pid):
@@ -599,18 +905,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def api_project_update(self, q, pid):
         b = self.body_json()
-        meta = read_meta(pid)
-        if "text" in b:
-            open(os.path.join(pdir(pid), "text.txt"), "w", encoding="utf-8").write(b["text"])
-        if "preset" in b:
-            meta["preset"] = presets.resolve(b["preset"])
-            if b.get("reset_overrides", True):
-                meta["overrides"] = {}
-        if "overrides" in b:
-            meta["overrides"] = b["overrides"]
-        if "name" in b:
-            meta["name"] = b["name"][:80]
-        write_meta(pid, meta)
+        with _meta_lock:   # ler-alterar-gravar sem outra requisição no meio
+            meta = read_meta(pid)
+            if "text" in b:
+                with open(os.path.join(pdir(pid), "text.txt"), "w", encoding="utf-8") as f:
+                    f.write(b["text"])
+            if "preset" in b:
+                meta["preset"] = presets.resolve(b["preset"])
+                if b.get("reset_overrides", True):
+                    meta["overrides"] = {}
+            if "overrides" in b:
+                meta["overrides"] = b["overrides"]
+            if "name" in b:
+                meta["name"] = b["name"][:80]
+            write_meta(pid, meta)
         self.send_json({"ok": True, "style": project_style(pid)})
 
     def api_plan(self, q, pid):
@@ -619,25 +927,72 @@ class Handler(BaseHTTPRequestHandler):
         scenes = [{"t_in": s["t_in"], "t_out": s["t_out"], "mode": s["mode"],
                    "text": " / ".join(" ".join(t["text"] for t in l["tokens"]) for l in s["lines"]),
                    "red": any(t["color"].lower() == style["colors"]["red"].lower() for l in s["lines"] for t in l["tokens"]),
-                   "decos": [d["kind"] for d in s.get("decos", [])]}
+                   "decos": [d["kind"] for d in s.get("decos", [])],
+                   "wi": sorted({t["wi"] for l in s["lines"] for t in l["tokens"] if t.get("wi") is not None}),
+                   "behind": bool(s.get("behind"))}
                   for s in plan["scenes"]]
+        w, h = live_size(meta)
+        mv = meta.get("matte_v", 0)
+        mjob = next((j for j in JOBS.values() if j["project"] == pid and j["kind"] in ("matte", "mp4", "alpha")
+                     and j["status"] == "running" and j["message"].startswith("Recortando")), None)
+        bl = style["effects"].get("blend", {})
+        g = style["effects"].get("gradient", {})
+        live = {"fps": LIVE_FPS, "w": w, "h": h, "segs": live_info(key, style, plan, meta["duration"], mv)["segs"],
+                "blend": bl.get("mode", "difference") if bl.get("enabled") else None,
+                # gradiente atrás da legenda: imagem única, pedida de novo só quando ele muda
+                "bg": hashlib.sha1(json.dumps([g, w, h], sort_keys=True).encode()).hexdigest()[:12] if g.get("enabled") else None}
+        # texto atrás da pessoa: quantos quadros ainda sem recorte, e o trabalho que está recortando
+        live["matte"] = {"need": matte.count(matte_need(pid, meta, plan)), "v": mv, "model": matte.available(),
+                         "job": job_public(mjob) if mjob else None}
         self.send_json({"key": key, "duration": meta["duration"], "scenes": scenes, "flashes": plan["flashes"],
-                        "words": plan.get("words", [])})
+                        "words": plan.get("words", []), "groups": plan.get("groups", []), "live": live})
+
+    def api_matte(self, q, pid):
+        """Começa (ou devolve) o recorte da pessoa dos trechos {atras} que ainda não têm."""
+        j = next((j for j in JOBS.values() if j["project"] == pid and j["kind"] == "matte" and j["status"] == "running"), None)
+        if j is None:
+            if not matte.available():
+                return self.send_json({"error": "modelo de recorte não encontrado (pasta models/)"}, 400)
+            j = job_matte(pid)
+        self.send_json(job_public(j))
 
     def api_hits(self, q, pid):
         key, style, plan = project_plan(pid)
-        self.send_json({"key": key, "hits": renderer_for(pid, key, style, plan).hits(float(q.get("t", 0)))})
+        self.send_json({"key": key, "hits": live_renderer(pid, key, style, plan).hits(float(q.get("t", 0)))})
 
-    def api_frame(self, q, pid):
+    def api_live_bg(self, q, pid):
+        import cv2
+        key, style, plan = project_plan(pid)
+        img = live_renderer(pid, key, style, plan).gradient_layer()
+        if img is None:
+            return self.send_json({"error": "sem gradiente"}, 404)
+        self.send_bytes(cv2.imencode(".png", cv2.cvtColor(img, cv2.COLOR_RGBA2BGRA))[1].tobytes(), "image/png")
+
+    def api_live(self, q, pid):
+        """Quadros da legenda para a prévia ao vivo. f = "a-b,c-d" (índices a 30 fps, até 120 por pedido).
+        Resposta: [uint32 tamanho][JSON {key, frames:[{i, sig, l:[[camada,x,y,w,h,início,tamanho]]}]}][PNGs]"""
         meta = read_meta(pid)
-        t = float(q.get("t", 0))
-        base = grab_frame(os.path.join(pdir(pid), meta["file"]), t, meta["width"], meta["height"])
-        if os.path.exists(os.path.join(pdir(pid), "words.json")):
-            key, style, plan = project_plan(pid)
-            img = renderer_for(pid, key, style, plan).frame(t, base)
-        else:
-            img = base
-        self.send_bytes(jpeg(img, 86, int(q.get("h", 1280))), "image/jpeg")
+        key, style, plan = project_plan(pid)
+        info = live_info(key, style, plan, meta["duration"], meta.get("matte_v", 0))
+        n = len(info["sig"])
+        idx = []
+        for part in (q.get("f") or "").split(","):
+            a, _, b = part.partition("-")
+            if a.isdigit():
+                idx += range(int(a), min(n, int(b if b.isdigit() else a) + 1))
+        idx = [i for i in dict.fromkeys(idx) if 0 <= i < n][:120]
+        R = live_renderer(pid, key, style, plan)
+        results = list(_live_pool.map(lambda i: (i, [] if info["sig"][i] == "0" else live_frame(R, i)), idx))
+        frames, blobs, off = [], [], 0
+        for i, layers in results:
+            ls = []
+            for name, x, y, w, h, png in layers:
+                ls.append([name, x, y, w, h, off, len(png)])
+                blobs.append(png)
+                off += len(png)
+            frames.append({"i": i, "sig": info["sig"][i], "l": ls})
+        head = json.dumps({"key": key, "frames": frames}).encode()
+        self.send_bytes(struct.pack("<I", len(head)) + head + b"".join(blobs), "application/octet-stream")
 
     def api_thumb(self, q, pid):
         self.send_file(os.path.join(pdir(pid), "thumb.jpg"))
@@ -653,6 +1008,16 @@ class Handler(BaseHTTPRequestHandler):
             if j["project"] == pid and j["status"] == "running" and j["kind"] == kind:
                 j["cancel"] = True
         self.send_json(job_public(job_render(pid, kind, b)))
+
+    def api_reveal(self, q, pid):
+        """Abre a pasta do projeto no Explorer, com o arquivo exportado selecionado."""
+        d = pdir(pid)
+        f = os.path.join(d, os.path.basename(self.body_json().get("file") or ""))
+        if os.name == "nt":
+            subprocess.Popen(["explorer", "/select," + f] if os.path.isfile(f) else ["explorer", d])
+        else:
+            subprocess.Popen(["xdg-open", d])
+        self.send_json({"ok": True})
 
     def api_job(self, q, jid):
         j = JOBS.get(jid)
@@ -682,13 +1047,17 @@ ROUTES = [
     ("DELETE", r"/api/presets/([\w-]+)", Handler.api_preset_delete),
     ("GET", r"/api/presets/([\w%-]+)/thumb\.jpg", Handler.api_preset_thumb),
     ("GET", r"/api/presets/([\w%-]+)/fx/(\w+)\.png", Handler.api_preset_fx),
+    ("GET", r"/api/presets/([\w%-]+)/anim\.mp4", Handler.api_preset_anim),
+    ("POST", r"/api/projects/(\w+)/reveal", Handler.api_reveal),
+    ("POST", r"/api/projects/(\w+)/matte", Handler.api_matte),
     ("GET", r"/api/projects", Handler.api_projects),
     ("POST", r"/api/upload", Handler.api_upload),
     ("GET", r"/api/projects/(\w+)", Handler.api_project),
     ("PUT", r"/api/projects/(\w+)", Handler.api_project_update),
     ("DELETE", r"/api/projects/(\w+)", Handler.api_project_delete),
     ("GET", r"/api/projects/(\w+)/plan", Handler.api_plan),
-    ("GET", r"/api/projects/(\w+)/frame\.jpg", Handler.api_frame),
+    ("GET", r"/api/projects/(\w+)/live", Handler.api_live),
+    ("GET", r"/api/projects/(\w+)/live_bg\.png", Handler.api_live_bg),
     ("GET", r"/api/projects/(\w+)/hits", Handler.api_hits),
     ("GET", r"/api/projects/(\w+)/thumb\.jpg", Handler.api_thumb),
     ("POST", r"/api/projects/(\w+)/transcribe", Handler.api_transcribe),

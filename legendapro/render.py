@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import json
+import threading
 
 import cv2
 import numpy as np
@@ -314,6 +315,31 @@ class Canvas:
         self.rgb[Y0:Y1, X0:X1] = np.clip(out + 0.5, 0, 255).astype(np.uint8)
 
 
+class LayerCanvas:
+    """Prévia ao vivo: a legenda em três camadas transparentes que o navegador mistura com o vídeo
+    — normal, luz (screen: brilhos e raios) e o modo de mistura do estilo (difference etc.).
+    Cada camada usa as mesmas fórmulas que a mistura feita aqui: (1-α)·fundo + α·B(fundo, cor)."""
+
+    NAMES = ("normal", "screen", "blend")
+
+    def __init__(self, W, H):
+        self.layers = {k: Canvas(np.zeros((H, W, 3), np.uint8), np.zeros((H, W), np.uint8)) for k in self.NAMES}
+        base = self.layers["normal"]
+        self.rgb, self.a, self.W, self.H = base.rgb, base.a, W, H   # gradiente e cards vão na camada normal
+
+    def fill(self, color):
+        self.layers["normal"].fill(color)
+
+    def blend(self, x0, y0, a, color):
+        self.layers["normal"].blend(x0, y0, a, color)
+
+    def screen(self, x0, y0, a, color):
+        self.layers["screen"].blend(x0, y0, a, color)
+
+    def mix(self, x0, y0, a, color, mode="normal"):
+        self.layers["normal" if mode == "normal" else "blend"].blend(x0, y0, a, color)
+
+
 def warp_mask(spr, ax, ay, scale, blur, extra=0):
     """Posiciona o sprite: ponto de origem (ox,oy) vai para (ax,ay) com escala. Retorna (x0,y0,mask)."""
     mask = spr["mask"]
@@ -348,12 +374,19 @@ class Renderer:
             self.scenes.append(self.shift(self.prepare(sc)))
         self.flash_img = self.make_flash()
         self.grad = self.make_gradient()
+        # prévia ao vivo (camadas sem vídeo): função t -> quadro RGB do vídeo, para a guarda de contraste
+        self.guard_bg = None
+        # texto atrás da pessoa: função t -> recorte da pessoa (H×W float 0..1) ou None se não houver
+        self.matte = None
+        self._guard_lock = threading.Lock()
 
     def shift(self, sc):
         """Posição global da legenda (layout.offset_x / offset_y, em fração da largura/altura):
         move todas as cenas juntas, depois de montadas, sem mudar o desenho delas."""
         lay = self.p["layout"]
-        dx, dy = lay.get("offset_x", 0.0) * self.W, lay.get("offset_y", 0.0) * self.H
+        b = sc.get("behind") or {}   # trecho atrás da pessoa: posição própria somada à geral
+        dx = (lay.get("offset_x", 0.0) + b.get("dx", 0.0)) * self.W
+        dy = (lay.get("offset_y", 0.0) + b.get("dy", 0.0)) * self.H
         if not dx and not dy:
             return sc
         phrase = sc["mode"] in ("plain", "hero", "block", "fill")
@@ -530,7 +563,8 @@ class Renderer:
         (pequenas = herói / hero_ratio, mesma linha de base); linhas curtas em zigue-zague."""
         W, H = self.W, self.H
         lay = self.p["layout"]
-        box = lay["safe_width"] * W
+        z = sc.get("behind", {}).get("s", 1.0)   # tamanho próprio do trecho atrás da pessoa
+        box = lay["safe_width"] * W * z
         ratio = lay.get("hero_ratio", 1.85)
 
         def measure(toks, S):
@@ -545,7 +579,7 @@ class Renderer:
             toks = [{"t": t} for t in ln["tokens"]]
             has_hero = any(t["anim"] == "hero" for t in ln["tokens"])
             if has_hero:
-                lo, hi = 8.0, lay.get("hero_max_size", 0.12) * W
+                lo, hi = 8.0, lay.get("hero_max_size", 0.12) * W * z
                 for _ in range(18):            # maior tamanho que cabe na caixa
                     mid = (lo + hi) / 2
                     if measure(toks, mid)[0] <= box:
@@ -554,7 +588,7 @@ class Renderer:
                         hi = mid
                 width, sp = measure(toks, lo)
             else:
-                S = lay["base_size"] * W * ratio   # pequenas no tamanho base
+                S = lay["base_size"] * W * ratio * z   # pequenas no tamanho base
                 width, sp = measure(toks, S)
                 if width > box:
                     width, sp = measure(toks, S * box / width)
@@ -991,18 +1025,26 @@ class Renderer:
 
     def contrast_guard(self, cv, sc, oy):
         """Se a cor de destaque some no fundo (ex.: texto vermelho sobre camisa vermelha),
-        troca todos os destaques da cena pela cor de reserva do preset."""
-        sc["_guard"] = False
-        if cv.a is not None or sc.get("bg"):
-            return
+        troca todos os destaques da cena pela cor de reserva do preset. Decide uma vez por cena;
+        sc["_guard"] só é publicado no fim (outras threads esperam em draw_scene)."""
+        sc["_guard"] = self._guard_decide(cv, sc, oy)
+
+    def _guard_decide(self, cv, sc, oy):
+        if sc.get("bg") or (cv.a is not None and self.guard_bg is None):   # MOV transparente: sem vídeo para olhar
+            return False
         cols = self.p["colors"]
         text_rgb = hex2rgb(cols["text"])
         accents = [tk for l in sc["L"] for tk in l["toks"]
                    if np.abs(tk["rgb"] - text_rgb).sum() > 0.1 and not tk["t"].get("user_color")]
         if not accents:
-            return
+            return False
         fallback = hex2rgb(cols.get("red_fallback", cols["text"]))
-        img = cv.rgb.astype(np.float32) / 255
+        if cv.a is not None:   # prévia ao vivo: olha o quadro do vídeo no começo da cena (com o gradiente)
+            under = Canvas(self.guard_bg(max(0.0, sc["t_in"])).copy())
+            self.draw_gradient(under)
+            img = under.rgb.astype(np.float32) / 255
+        else:
+            img = cv.rgb.astype(np.float32) / 255
         for tk in accents:
             m = tk["m"]
             x0, x1 = int(max(0, tk["x"])), int(min(self.W, tk["x"] + m["width"]))
@@ -1019,11 +1061,10 @@ class Renderer:
             same = (dh < 28) & (hsv[:, 1] > 0.35) & (hsv[:, 2] > 0.3)
             close = (np.linalg.norm(roi.reshape(-1, 3) - tk["rgb"], axis=1) < 0.3)
             if (same | close).mean() > 0.22:
-                sc["_guard"] = True
-                break
-        if sc["_guard"]:
-            for tk in accents:
-                tk["rgb_eff"] = fallback
+                for t2 in accents:
+                    t2["rgb_eff"] = fallback
+                return True
+        return False
 
     def draw_scene(self, cv, sc, t):
         if t < sc["t_in"] - 1e-6:
@@ -1040,7 +1081,9 @@ class Renderer:
         W = self.W
         sh = self.fx["shadow"]
         if "_guard" not in sc:
-            self.contrast_guard(cv, sc, oy)
+            with self._guard_lock:   # quadros em paralelo: a primeira thread decide, as outras esperam
+                if "_guard" not in sc:
+                    self.contrast_guard(cv, sc, oy)
         states = []
         for li, l in enumerate(sc["L"]):
             for tk in l["toks"]:
@@ -1179,6 +1222,55 @@ class Renderer:
                 f = f * (1 - 0.55 * a) + self.flash_img * (0.55 * a)
                 cv.rgb[:] = np.clip(f * 255 + 0.5, 0, 255).astype(np.uint8)
 
+    def flash_alpha(self, t):
+        """Intensidade do clarão em t (0 = nenhum), na mesma curva de draw_flash."""
+        D = self.fx.get("flash", {}).get("duration", 0.4)
+        best = 0.0
+        for tf in self.plan.get("flashes", []):
+            u = (t - (tf - D * 0.35)) / D
+            if 0 <= u <= 1:
+                best = max(best, min(1.0, math.sin(math.pi * u) ** 0.6 * 1.15))
+        return best
+
+    def gradient_layer(self):
+        """Prévia ao vivo: o gradiente atrás da legenda é igual em todos os quadros, então vai uma vez só
+        (camada RGBA de baixo); None se o estilo não tem gradiente."""
+        if self.grad is None or self.grad["y0"] >= self.H:
+            return None
+        cv = Canvas(np.zeros((self.H, self.W, 3), np.uint8), np.zeros((self.H, self.W), np.uint8))
+        self.draw_gradient(cv)
+        return np.dstack([cv.rgb, cv.a])
+
+    def frame_layers(self, t):
+        """Prévia ao vivo: só a legenda, em camadas RGBA (normal, screen, blend) para o navegador
+        misturar com o vídeo, por cima do gradiente (gradient_layer). O clarão entre frases é a luz
+        (screen) + uma lavagem por cima de tudo, numa quarta camada ("flash") só quando ele aparece."""
+        cv = LayerCanvas(self.W, self.H)
+        active = [sc for sc in self.scenes if sc["t_in"] - 0.01 <= t <= sc["t_out"] + 1.0]
+        back = [sc for sc in active if sc.get("behind")]
+        m = self.matte(t) if back and self.matte else None
+        out = {}
+        if m is not None:
+            # atrás da pessoa: camadas "back_*" embaixo e o recorte da pessoa ("person", alfa = recorte)
+            # por cima delas; o navegador desenha ali o próprio vídeo, mascarado pelo recorte
+            bk = LayerCanvas(self.W, self.H)
+            for sc in back:
+                self.draw_scene(bk, sc, t)
+            out = {f"back_{k}": np.dstack([c.rgb, c.a]) for k, c in bk.layers.items()}
+            out["person"] = np.dstack([np.full((self.H, self.W, 3), 255, np.uint8), (m * 255 + 0.5).astype(np.uint8)])
+            active = [sc for sc in active if not sc.get("behind")]
+        for sc in active:
+            self.draw_scene(cv, sc, t)
+        a = self.flash_alpha(t)
+        if a > 0:
+            full = np.ones((self.H, self.W), np.float32)
+            cv.screen(0, 0, full * a, self.flash_img)
+            top = Canvas(np.zeros((self.H, self.W, 3), np.uint8), np.zeros((self.H, self.W), np.uint8))
+            top.blend(0, 0, full * (0.55 * a), self.flash_img)
+            cv.layers["flash"] = top
+        out.update({k: np.dstack([c.rgb, c.a]) for k, c in cv.layers.items()})
+        return out
+
     def hits(self, t):
         """Caixas (0..1) das palavras visíveis no tempo t, para clicar no preview."""
         out = []
@@ -1213,9 +1305,22 @@ class Renderer:
             alpha = None
         cv = Canvas(rgb, alpha)
         self.draw_gradient(cv)
-        for sc in self.scenes:
-            if sc["t_in"] - 0.01 <= t <= sc["t_out"] + 1.0:
+        active = [sc for sc in self.scenes if sc["t_in"] - 0.01 <= t <= sc["t_out"] + 1.0]
+        back = [sc for sc in active if sc.get("behind")]
+        m = self.matte(t) if back and self.matte else None
+        if m is not None:
+            # texto atrás da pessoa: desenha o trecho e devolve a pessoa (como estava) por cima
+            # (no MOV transparente o "como estava" é o gradiente: o texto some onde a pessoa passa)
+            under, under_a = cv.rgb.copy(), None if cv.a is None else cv.a.copy()
+            for sc in back:
                 self.draw_scene(cv, sc, t)
+            m3 = m[..., None]
+            cv.rgb[:] = (cv.rgb * (1 - m3) + under * m3 + 0.5).astype(np.uint8)
+            if under_a is not None:
+                cv.a[:] = (cv.a * (1 - m) + under_a * m + 0.5).astype(np.uint8)
+            active = [sc for sc in active if not sc.get("behind")]
+        for sc in active:
+            self.draw_scene(cv, sc, t)
         if not self.alpha:
             self.draw_flash(cv, t)
         if self.alpha:
@@ -1240,12 +1345,13 @@ class Cancelled(Exception):
 
 
 def render_video(preset, plan, out, video=None, size=None, fps=30.0, duration=None, alpha=False,
-                 progress=True, cancel=None, workers=None, gpu=True, crf=18):
+                 progress=True, cancel=None, workers=None, gpu=True, crf=18, matte=None):
     """Renderiza o vídeo final.
 
     progress: True (imprime), None/False ou função(frame, total).
     cancel:   função que retorna True para interromper.
     gpu:      usa NVENC (h264_nvenc) quando disponível.
+    matte:    função (t, W, H) -> recorte da pessoa (float 0..1) para o texto atrás dela, ou None.
     """
     from collections import deque
     from concurrent.futures import ThreadPoolExecutor
@@ -1261,10 +1367,14 @@ def render_video(preset, plan, out, video=None, size=None, fps=30.0, duration=No
     if duration:
         dur = min(dur, duration)
     R = Renderer(preset, plan, W, H, alpha=alpha and not video)
+    if matte:
+        R.matte = lambda t: matte(t, W, H)
     nframes = int(round(dur * fps))
     dec = None
     if video:
-        vf = ["-vf", f"scale={W}:{H}"] if size else []
+        # grade de quadros explícita (fps): é a mesma que o recorte da pessoa usa (matte.compute), então o
+        # quadro k daqui e o recorte k são o mesmo instante, inclusive em vídeo de taxa variável
+        vf = ["-vf", f"fps={fps:.6f}" + (f",scale={W}:{H}" if size else "")]
         dec = subprocess.Popen(["ffmpeg", "-v", "error", "-i", video, *vf, "-f", "rawvideo",
                                 "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
     if R.alpha:

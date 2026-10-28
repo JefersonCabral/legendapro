@@ -12,6 +12,8 @@ Marcações aceitas no texto (opcionais, o automático decide o resto):
   |             força quebra de cena
   "..."         trecho vira card de citação (presets com cards)
   {card} ... {/card}  idem, explícito
+  {atras} ... {/atras}  texto atrás da pessoa (recorte do vídeo nesse trecho), posição automática
+  {atras:dx,dy,escala}  idem, com posição própria (fração da largura/altura) e tamanho do trecho
 """
 import json
 import re
@@ -57,7 +59,37 @@ _MARKS = [
 
 _COLOR = re.compile(r"^\{(#[0-9a-fA-F]{6})\}(.+)$")
 _NOEMPH = re.compile(r"^\{-\}(.+)$")
-_TOKEN = re.compile(r"\{/?card\}|[\"“”]|(?:(?!\{/?card\})[^\s\"“”])+")
+_TAG = r"\{/?card\}|\{atras(?::[^}\s]*)?\}|\{/atras\}"
+_TOKEN = re.compile(_TAG + r"|[\"“”]|(?:(?!" + _TAG + r")[^\s\"“”])+")
+_BEHIND = re.compile(r"\{atras(?::([^}\s]*))?\}")
+
+
+def behind_params(arg):
+    """'{atras:dx,dy,escala}' -> (dx, dy, escala); valores que faltam ficam no padrão (0, 0, 1)."""
+    vals = [0.0, 0.0, 1.0]
+    for k, v in enumerate((arg or "").split(",")[:3]):
+        try:
+            vals[k] = float(v)
+        except ValueError:
+            pass
+    vals[2] = min(4.0, max(0.3, vals[2]))
+    return tuple(vals)
+
+
+def behind_groups(text):
+    """Trechos {atras}…{/atras} do texto: [{g, dx, dy, s, open: (início, fim), close: (início, fim) | None}]."""
+    out = []
+    for mt in re.finditer(r"\{atras(?::[^}\s]*)?\}|\{/atras\}", text):
+        if mt.group(0) == "{/atras}":
+            if out and out[-1]["close"] is None:
+                out[-1]["close"] = mt.span()
+            continue
+        if out and out[-1]["close"] is None:   # abriu outro sem fechar: o anterior termina aqui
+            out[-1]["close"] = (mt.start(), mt.start())
+        arg = _BEHIND.match(mt.group(0)).group(1)
+        dx, dy, sc = behind_params(arg)
+        out.append({"g": len(out), "dx": dx, "dy": dy, "s": sc, "auto": arg is None, "open": mt.span(), "close": None})
+    return out
 
 
 def parse_markup(text, spans=False):
@@ -66,12 +98,27 @@ def parse_markup(text, spans=False):
     spans=True devolve também (início, fim) de cada palavra no texto original, para a
     interface localizar e editar a palavra clicada no preview."""
     out, pos, in_card, quote_open = [], [], False, False
+    behind, ngroups = None, 0   # trecho {atras} aberto: flags que as palavras dele recebem
     for mt in _TOKEN.finditer(text):
         raw = mt.group(0)
         if raw == "{card}":
             in_card = True; continue
         if raw == "{/card}":
             in_card = False; continue
+        mb = _BEHIND.fullmatch(raw)
+        if mb or raw == "{/atras}":
+            # as bordas do trecho viram quebra de legenda: uma cena nunca fica meio atrás, meio na frente
+            if out:
+                out[-1][1].add("break")
+            behind = None
+            if mb:
+                if mb.group(1) is None:   # {atras} sem números: posição automática (pela silhueta da pessoa)
+                    behind = {"behind", f"behind:{ngroups}:auto"}
+                else:
+                    dx, dy, sc = behind_params(mb.group(1))
+                    behind = {"behind", f"behind:{ngroups}:{dx:g}:{dy:g}:{sc:g}"}
+                ngroups += 1
+            continue
         if raw in "\"“”":
             quote_open = not quote_open; continue
         if raw == "|":
@@ -109,6 +156,8 @@ def parse_markup(text, spans=False):
             continue
         if in_card or quote_open:
             flags.add("card")
+        if behind:
+            flags |= behind
         out.append([core + tail, flags])
         pos.append(mt.span())
     if spans:
