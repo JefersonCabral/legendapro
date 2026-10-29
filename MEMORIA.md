@@ -220,6 +220,12 @@ Pedido do dono: deixar a ferramenta "online", com o processamento no PC de quem 
   - `av==18.0.0`: o faster-whisper 1.2.1 usa `metadata_errors`, que a av 19 tirou;
   - mlx-whisper com `--no-deps`: ele declara o torch só para converter modelos;
   - onnxruntime 1.23.2 no Mac Intel: o projeto parou de publicar para Intel depois dessa versão.
+- **Bug de corrida no brilho (corrigido só na cópia, v1.0.3):**
+  - **Sintoma:** manchas de brilho na palavra errada, nos presets 3, 4 e 6.
+  - **Causa:** os quadros são desenhados em várias threads, e `Sprites.get` não tinha trava. Duas threads criavam o mesmo sprite, uma cópia era descartada e o id dela ia parar em outro sprite. `glow_img` usava `id(spr)` na chave do cache, então esse outro sprite recebia o brilho errado.
+  - **Correção:** `setdefault` em `Sprites.get` e a chave do brilho passa a ser a chave do sprite.
+  - **O original (`legendapro/render.py`) ainda tem o bug.** O dono pediu para não mexer nele; aplicar lá quando ele autorizar.
+- **Comparação original × online (out/2026):** vídeos exportados idênticos pixel a pixel nos 11 presets; prévia no navegador igual (mesma lógica e mesmo ritmo); `anim.mp4` dos cartões idênticos byte a byte. Scripts em `cmp/` na pasta temporária da sessão.
 - **PC sem placa:** `LEGENDAPRO_FORCE_CPU=1` simula. Testado com vídeo real: transcrição, recorte e x264 corretos.
 
 ## Vídeos já processados
