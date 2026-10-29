@@ -207,14 +207,20 @@ Pedido do dono: deixar a ferramenta "online", com o processamento no PC de quem 
   - `make_site.py` copia `app/ui` para `site/app`.
 - `site/`: página de download, o app em `/app/` e `_headers` com CSP própria para `/app/*`, sem `upgrade-insecure-requests`.
 - **Domínio ainda não definido:** `SITE_ORIGINS` em `app/legendapro/__init__.py` aceita `legendapro.pages.dev`. Trocar quando o dono decidir e gerar o instalador de novo.
-- **Mac:** ainda não. O dono perguntou. O caminho seria:
-  - mlx-whisper;
-  - CoreML;
-  - videotoolbox;
-  - `.dmg` gerado no GitHub Actions;
-  - assinatura Apple de US$ 99 por ano.
-
-  Hoje o site mostra "Versão para Mac em breve".
+- **Mac:** o motor está preparado no mesmo código (`build/mac/`, ver o LEIA-ME de lá):
+  - transcrição com mlx-whisper no chip Apple; reserva com faster-whisper;
+  - recorte com CoreML;
+  - exportação com VideoToolbox;
+  - app na barra de menu (rumps), com link `legendapro://` via Apple Event;
+  - `.dmg` gerado e testado no GitHub Actions (`.github/workflows/mac.yml`, chip Apple em `macos-15` e Intel em `macos-15-intel`), com o teste com aceleração e com `LEGENDAPRO_FORCE_CPU=1`. O runner arm64 tem Metal: lá rodam de verdade o MLX e o VideoToolbox.
+  - Logs dos jobs exigem admin; o `ci_smoke.py` publica cada etapa como anotação (`::notice::`/`::error::`), que a API pública de check-runs devolve.
+  - O dono **não tem conta de desenvolvedor Apple**. O Mac dele é chip M, modelo desconhecido. A assinatura é ad hoc e a primeira abertura pede "Abrir mesmo assim".
+  - `DOWNLOAD_URL_MAC` vazio no `site/config.js` faz o site mostrar "em breve". **Falta o dono testar no Mac dele.**
+- **Fixações que importam:**
+  - `av==18.0.0`: o faster-whisper 1.2.1 usa `metadata_errors`, que a av 19 tirou;
+  - mlx-whisper com `--no-deps`: ele declara o torch só para converter modelos;
+  - onnxruntime 1.23.2 no Mac Intel: o projeto parou de publicar para Intel depois dessa versão.
+- **PC sem placa:** `LEGENDAPRO_FORCE_CPU=1` simula. Testado com vídeo real: transcrição, recorte e x264 corretos.
 
 ## Vídeos já processados
 
