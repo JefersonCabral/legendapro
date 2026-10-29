@@ -1,116 +1,94 @@
-# Site de download do LegendaPRO
+# Site do LegendaPRO (Cloudflare Pages)
 
-Site estático de uma página (HTML/CSS/JS puro, sem framework, sem build) para hospedar no **Cloudflare Pages**.
+Site estático (HTML/CSS/JS puro, sem build): a página de download em `/` e o próprio app em `/app/`. O app no
+navegador conversa com o **motor** instalado no PC da pessoa (`http://127.0.0.1:7860–7869`). Os instaladores do
+motor ficam na página de **Releases** do GitHub, não no Pages, que aceita no máximo 25 MiB por arquivo.
 
 ```
 site/
-├── index.html        página única
-├── config.js         DOWNLOAD_URL, VERSION, SIZE_MB  ← o único arquivo a editar numa versão nova
-├── _headers          cabeçalhos de segurança e cache do Cloudflare Pages
-├── LEIA-ME.md        este arquivo
-└── assets/
-    ├── styles.css
-    ├── script.js     aplica o config.js nos botões e anima a legenda de exemplo
-    └── favicon.svg
+├── index.html        página de download
+├── config.js         links dos instaladores, versão, tamanho   ← o que se edita numa versão nova
+├── _headers          segurança e cache (CSP própria para /app/*)
+├── app/              a interface do motor (cópia gerada de app/ui por build/make_site.py)
+├── fonts/            fontes da interface (Poppins, DM Mono; OFL)
+└── assets/           CSS, JS e ícone da página de download
 ```
 
-O `LEIA-ME.md` também vai junto no upload e fica acessível em `/LEIA-ME.md`. Se não quiser isso, publique uma cópia da pasta sem ele.
+## Publicar no Cloudflare Pages (ligado ao GitHub)
 
-## 1. Onde fica o instalador
+Assim, cada `git push` na `main` atualiza o site sozinho.
 
-O Cloudflare Pages aceita no máximo **25 MiB por arquivo**, então o `.exe` **não** vai na pasta do site. Ele fica num bucket **R2** (recomendado) ou no **GitHub Releases**, e o site só aponta para ele.
+1. Painel do Cloudflare → **Workers & Pages** → **Create** → aba **Pages** → **Connect to Git**.
+2. Autorize o GitHub e escolha o repositório **`JefersonCabral/legendapro`**.
+3. Configure:
 
-### Opção A — R2
+   | Campo | Valor |
+   |---|---|
+   | Project name | **`legendapro`**. É ele que define o endereço `https://legendapro.pages.dev`, que o motor já aceita. |
+   | Production branch | `main` |
+   | Framework preset | `None` |
+   | Build command | *(vazio)* |
+   | Build output directory | **`versao-instalavel/site`** |
+   | Root directory (Advanced) | *(vazio)* |
 
-1. Crie o bucket (uma vez):
+4. Clique em **Save and Deploy**. O site sai em `https://legendapro.pages.dev`, e o app em
+   `https://legendapro.pages.dev/app/`.
 
-   ```sh
-   npx wrangler r2 bucket create legendapro-downloads
-   ```
+**Se o Cloudflare der outro endereço** (ex.: `legendapro-abc.pages.dev`, porque o nome estava ocupado), o motor
+recusa o site até saber o novo endereço:
+1. Coloque o endereço em `SITE_ORIGINS`, em `versao-instalavel/app/legendapro/__init__.py`.
+2. Suba a versão em `VERSION`, no mesmo arquivo.
+3. Gere uma versão nova do motor (ver abaixo).
 
-2. Suba o instalador (use o nome com a versão, assim um link antigo nunca entrega o arquivo errado):
+**Alternativa sem Git:** **Upload assets** (Direct Upload), arrastando a pasta `versao-instalavel/site`. Pela
+linha de comando, na pasta `versao-instalavel`: `npx wrangler pages deploy site --project-name legendapro`.
 
-   ```sh
-   npx wrangler r2 object put legendapro-downloads/LegendaPRO-Setup-1.0.0.exe \
-     --file ./LegendaPRO-Setup-1.0.0.exe \
-     --content-type application/vnd.microsoft.portable-executable \
-     --content-disposition "attachment; filename=\"LegendaPRO-Setup-1.0.0.exe\"" \
-     --remote
-   ```
+## Instaladores: versão nova do motor
 
-   - `--remote` é obrigatório no Wrangler 4; sem ele o arquivo vai para o armazenamento local de teste.
-   - O `wrangler r2 object put` aceita arquivos de até ~300 MB. Acima disso, use a API S3 do R2 (rclone ou AWS CLI com o endpoint `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`).
-
-3. Deixe o bucket público por um **domínio próprio**: painel Cloudflare → R2 → `legendapro-downloads` → Settings → Public access → **Custom Domains** → `downloads.seudominio.com`. (O subdomínio `r2.dev` também funciona, mas tem limite de taxa e não é indicado para produção.)
-
-4. O link final fica: `https://downloads.seudominio.com/LegendaPRO-Setup-1.0.0.exe`. Abra no navegador para conferir que o download começa.
-
-### Opção B — GitHub Releases
-
-Crie uma release no repositório, anexe o `.exe` e copie o link do arquivo, no formato
-`https://github.com/<usuario>/<repo>/releases/download/v1.0.0/LegendaPRO-Setup-1.0.0.exe`.
-
-## 2. Trocar o link, a versão e o tamanho
-
-Edite só o topo de `config.js`:
-
-```js
-const DOWNLOAD_URL = "https://downloads.seudominio.com/LegendaPRO-Setup-1.0.0.exe";
-const VERSION = "1.0.0";
-const SIZE_MB = 180;   // tamanho do .exe em MB
-```
-
-O `script.js` aplica esses valores em todos os botões de download e nos selos de versão/tamanho.
-O `index.html` também traz o link placeholder e "v1.0.0 · 180 MB" escritos direto no HTML, só como reserva para quem estiver com JavaScript desligado; se quiser, troque lá também (procure `SEU-DOMINIO`).
-
-O `_headers` manda o navegador revalidar o `config.js` sempre, então a troca vale assim que o site for publicado de novo.
-Se mudar `assets/styles.css` ou `assets/script.js`, suba o `?v=1` correspondente no `index.html` (`?v=2`…), porque esses arquivos ficam em cache por 1 dia.
-
-Enquanto o `DOWNLOAD_URL` tiver `SEU-DOMINIO`, o console do navegador mostra um aviso.
-
-## 3. Publicar o site
-
-### (a) Pelo painel do Cloudflare Pages (upload direto)
-
-1. Painel Cloudflare → **Workers & Pages** → **Create** → aba **Pages** → **Upload assets** (Direct Upload).
-2. Nome do projeto: `legendapro`.
-3. Arraste a pasta `site` (ou um `.zip` com o conteúdo dela) e clique em **Deploy site**.
-4. O site sai em `https://legendapro.pages.dev`. Para usar um domínio próprio: projeto → **Custom domains** → **Set up a custom domain**.
-5. Para uma versão nova: projeto → **Create deployment** → envie a pasta de novo.
-
-### (b) Pela linha de comando (Wrangler)
-
-Na pasta `versao-instalavel` (a que contém `site/`):
+A Release é criada pelo GitHub Actions (`.github/workflows/motor.yml`). Ele monta e testa os instaladores de
+Windows e Mac e anexa tudo quando sai uma **tag**:
 
 ```sh
-npx wrangler login                     # uma vez, abre o navegador
-npx wrangler pages project create legendapro --production-branch main   # só na primeira vez
-npx wrangler pages deploy site --project-name legendapro
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-O `deploy` envia a pasta inteira; o `_headers` é lido automaticamente pelo Pages.
+Em ~15 minutos aparecem, em `https://github.com/JefersonCabral/legendapro/releases`:
+- `LegendaPRO-Setup.exe`;
+- `LegendaPRO-portatil.zip`;
+- `LegendaPRO-mac-arm64.dmg`;
+- `LegendaPRO-mac-x86_64.dmg`.
 
-## 4. Conferir depois de publicar
+O `config.js` usa `.../releases/latest/download/<arquivo>`, que sempre entrega a versão mais nova. Para uma versão
+nova, basta a tag: o site não muda. Se o tamanho do `.exe` mudar bastante, atualize o `SIZE_MB`.
 
-- O botão "Baixar para Windows" baixa o `.exe` do R2/GitHub (e não uma página 404).
-- Versão e tamanho aparecem embaixo do botão.
-- Cabeçalhos: `curl -I https://legendapro.pages.dev/` deve mostrar `content-security-policy`, `x-content-type-options: nosniff` e `referrer-policy`.
-- No celular, a página não rola para os lados.
+**Mac:** os `.dmg` já vão para a Release, mas o site mostra "Versão para Mac em breve" enquanto
+`DOWNLOAD_URL_MAC` estiver vazio no `config.js`. Depois de testar num Mac, troque pelas linhas indicadas no
+próprio arquivo.
+
+## Conferir depois de publicar
+
+- **Página `/`:**
+  - o botão "Baixar para Windows" baixa o `.exe` da Release, e não uma página 404;
+  - versão e tamanho aparecem embaixo do botão.
+- **App `/app/`:**
+  - com o motor fechado, aparece a tela "Abra o LegendaPRO no seu computador";
+  - com o motor aberto, o navegador pergunta sobre **acesso à rede local** e, depois de **Permitir**, a lista de
+    projetos carrega.
+- **Cabeçalhos:** `curl -I https://legendapro.pages.dev/app/` deve mostrar a `content-security-policy` com
+  `connect-src 'self' http://127.0.0.1:*`.
 
 ## Notas
 
-- **CSP**: só scripts e estilos do próprio site, mais o Google Fonts (`fonts.googleapis.com` para o CSS e `fonts.gstatic.com` para as fontes). Não use `style="..."` nem `<script>` inline no HTML: a CSP bloqueia.
-- **Fontes**: Poppins para tudo e DM Mono só para rótulos técnicos, ambas OFL, carregadas do Google Fonts. Sem serifada e sem itálico na interface.
-- **SmartScreen**: enquanto o instalador não for assinado digitalmente, o Windows mostra "O Windows protegeu o computador". A seção de perguntas do site explica o "Mais informações → Executar assim mesmo". Um certificado de assinatura de código resolve isso de vez.
-
-## O app no navegador (`/app/`)
-
-- `site/app/` é uma **cópia gerada** da interface do motor (`app/ui`). Depois de mudar qualquer coisa em `app/ui`,
-  rode `python build/make_site.py` e publique de novo. O script também copia as fontes da interface para
+- **CSP:**
+  - na página de download, só o próprio site e o Google Fonts;
+  - no app, também `http://127.0.0.1:*`, para falar com o motor, e `'unsafe-inline'` só em estilos;
+  - **não** coloque `upgrade-insecure-requests` na regra `/app/*`: ela trocaria `http://127.0.0.1` por `https` e
+    o motor não seria encontrado.
+- **Depois de mudar `app/ui`:** rode `python versao-instalavel/build/make_site.py` para atualizar `site/app/` e
   `site/fonts/`.
-- No site, a interface procura o motor do PC em `http://127.0.0.1:7860–7869`. Para isso, a regra `/app/*` do
-  `_headers` tem uma CSP própria: libera `http://127.0.0.1:*` em `connect-src`, `img-src` e `media-src`, e **não**
-  pode ter `upgrade-insecure-requests`, que trocaria `http://127.0.0.1` por `https`.
-- O motor só atende sites conhecidos. O domínio de produção precisa estar em `SITE_ORIGINS`
-  (`app/legendapro/__init__.py`) antes de gerar o instalador. O padrão já aceita `https://legendapro.pages.dev` e as
-  prévias `https://*.legendapro.pages.dev`. Se o projeto no Pages tiver outro nome, ajuste ali.
+- **Depois de mudar `assets/styles.css` ou `assets/script.js`:** suba o `?v=` no `index.html`, porque esses
+  arquivos ficam em cache por 1 dia.
+- **Avisos de instalação:** sem assinatura paga, o Windows mostra "O Windows protegeu o computador" e o Mac pede
+  "Abrir mesmo assim". As perguntas frequentes da página explicam os dois.
+- **Arquivos públicos:** o `LEIA-ME.md` também é publicado (`/LEIA-ME.md`). Não tem nada sigiloso.

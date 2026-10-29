@@ -60,7 +60,7 @@
     el.textContent = fmtSize(size);
   });
 
-  if (/SEU-DOMINIO/i.test(url)) {
+  if (/SEU-DOMINIO/i.test(url) || !url) {
     console.warn("[LegendaPRO] DOWNLOAD_URL ainda é o placeholder. Edite config.js antes de publicar.");
   }
 

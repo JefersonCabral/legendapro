@@ -1,0 +1,143 @@
+# Motor do LegendaPRO (Windows e Mac): monta os instaladores e roda o teste de ponta a ponta (enviar vídeo,
+# transcrever, recortar a pessoa, exportar MP4 e MOV, recusar outro site), com e sem aceleração.
+# Em tag v* (ex.: v1.0.0), cria a Release com tudo:
+#   LegendaPRO-Setup.exe, LegendaPRO-portatil.zip, LegendaPRO-mac-arm64.dmg, LegendaPRO-mac-x86_64.dmg
+# O site usa os links .../releases/latest/download/<arquivo>, que sempre apontam para a versão mais nova.
+#
+# As máquinas do GitHub são virtuais: no Windows não há placa de vídeo (tudo no processador); no Mac com
+# chip Apple o Metal está liberado (MLX e VideoToolbox rodam de verdade).
+name: Motor (Windows e Mac)
+
+on:
+  push:
+    branches: [main]
+    paths: ["versao-instalavel/**", ".github/workflows/motor.yml"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write     # criar a Release e anexar os arquivos (só em tag)
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versão
+        id: v
+        shell: bash
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          [[ "$GITHUB_REF" == refs/tags/v* ]] || V="$(python -c "import re;print(re.search(r'VERSION = \"(.+?)\"', open('versao-instalavel/app/legendapro/__init__.py').read()).group(1))")"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Cache dos downloads (Python, ffmpeg)
+        uses: actions/cache@v4
+        with:
+          path: versao-instalavel/build/cache
+          key: win-${{ hashFiles('versao-instalavel/build/build.ps1', 'versao-instalavel/build/requirements-dist.txt') }}
+
+      - name: Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Montar instalador e zip
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File versao-instalavel/build/build.ps1 -Zip -Version ${{ steps.v.outputs.version }}
+
+      - name: Teste de ponta a ponta
+        shell: bash
+        run: |
+          D=versao-instalavel/dist/LegendaPRO
+          "$D/python/python.exe" versao-instalavel/build/ci_smoke.py --python "$D/python/python.exe" --app "$D/app" --model tiny
+
+      - name: Teste sem aceleração (processador)
+        shell: bash
+        env:
+          LEGENDAPRO_FORCE_CPU: "1"
+        run: |
+          D=versao-instalavel/dist/LegendaPRO
+          "$D/python/python.exe" versao-instalavel/build/ci_smoke.py --python "$D/python/python.exe" --app "$D/app" --model tiny --port 7890
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LegendaPRO-windows
+          path: |
+            versao-instalavel/dist/LegendaPRO-Setup.exe
+            versao-instalavel/dist/LegendaPRO-portatil.zip
+          retention-days: 30
+
+      - name: Anexar na Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: versao-instalavel/NOTAS-DA-VERSAO.md
+          files: |
+            versao-instalavel/dist/LegendaPRO-Setup.exe
+            versao-instalavel/dist/LegendaPRO-portatil.zip
+
+  mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    # o Mac Intel é secundário: se a máquina Intel do GitHub não estiver disponível, não trava o resto
+    continue-on-error: ${{ matrix.arch == 'x86_64' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versão
+        id: v
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          [[ "$GITHUB_REF" == refs/tags/v* ]] || V="$(python3 -c "import re;print(re.search(r'VERSION = \"(.+?)\"', open('versao-instalavel/app/legendapro/__init__.py').read()).group(1))")"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Cache dos downloads (Python, ffmpeg)
+        uses: actions/cache@v4
+        with:
+          path: versao-instalavel/build/cache-mac
+          key: mac-${{ matrix.arch }}-${{ hashFiles('versao-instalavel/build/mac/build_mac.sh') }}
+
+      - name: Montar LegendaPRO.app e .dmg
+        env:
+          APPLE_SIGN_ID: ${{ secrets.APPLE_SIGN_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: bash versao-instalavel/build/mac/build_mac.sh ${{ matrix.arch }} ${{ steps.v.outputs.version }}
+
+      - name: Teste de ponta a ponta
+        run: |
+          RES=versao-instalavel/dist-mac/LegendaPRO.app/Contents/Resources
+          "$RES/python/bin/python3" versao-instalavel/build/ci_smoke.py \
+            --python "$RES/python/bin/python3" --app "$RES/app" --model tiny
+
+      - name: Teste sem aceleração (processador)
+        env:
+          LEGENDAPRO_FORCE_CPU: "1"
+        run: |
+          RES=versao-instalavel/dist-mac/LegendaPRO.app/Contents/Resources
+          "$RES/python/bin/python3" versao-instalavel/build/ci_smoke.py \
+            --python "$RES/python/bin/python3" --app "$RES/app" --model tiny --port 7890
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LegendaPRO-mac-${{ matrix.arch }}
+          path: versao-instalavel/dist-mac/LegendaPRO-mac-${{ matrix.arch }}.dmg
+          retention-days: 30
+
+      - name: Anexar na Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: versao-instalavel/NOTAS-DA-VERSAO.md
+          files: versao-instalavel/dist-mac/LegendaPRO-mac-${{ matrix.arch }}.dmg

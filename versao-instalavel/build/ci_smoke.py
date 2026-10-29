@@ -22,17 +22,21 @@ FALA = "Trabalhar oito horas por dia para levar dois mil reais no fim do mês é
 
 
 def make_video(tmp, ffmpeg):
-    audio = os.path.join(tmp, "fala.aiff" if sys.platform == "darwin" else "fala.wav")
-    if sys.platform == "darwin":
-        voices = subprocess.run(["say", "-v", "?"], capture_output=True, text=True).stdout
-        v = ["-v", "Luciana"] if "Luciana" in voices else []
-        subprocess.run(["say", *v, "-o", audio, FALA], check=True)
-    elif sys.platform == "win32":
-        ps = ("Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-              f"$s.SetOutputToWaveFile('{audio}'); $s.Speak('{FALA}'); $s.Dispose()")
-        subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True)
-    else:
-        subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=6", audio], check=True)
+    # fala em português gravada junto do script (voz pt-BR do Windows): o mesmo áudio em qualquer máquina,
+    # sem depender das vozes instaladas; as vozes do sistema ficam de reserva
+    audio = os.path.join(os.path.dirname(os.path.abspath(__file__)), "teste-fala.opus")
+    if not os.path.exists(audio):
+        audio = os.path.join(tmp, "fala.aiff" if sys.platform == "darwin" else "fala.wav")
+        if sys.platform == "darwin":
+            voices = subprocess.run(["say", "-v", "?"], capture_output=True, text=True).stdout
+            v = ["-v", "Luciana"] if "Luciana" in voices else []
+            subprocess.run(["say", *v, "-o", audio, FALA], check=True)
+        elif sys.platform == "win32":
+            ps = ("Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                  f"$s.SetOutputToWaveFile('{audio}'); $s.Speak('{FALA}'); $s.Dispose()")
+            subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True)
+        else:
+            subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=6", audio], check=True)
     out = os.path.join(tmp, "teste fala.mp4")
     subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=720x1280:r=30", "-i", audio,
                     "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", out], check=True)
