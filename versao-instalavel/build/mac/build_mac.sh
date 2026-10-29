@@ -122,7 +122,14 @@ LegendaPRO para Mac
    a pasta dos projetos ou sai do programa.
 EOF
 DMG="$OUT/LegendaPRO-mac-$ARCH.dmg"
-hdiutil create -volname "LegendaPRO" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+# o hdiutil às vezes falha com "Resource busy" logo depois da assinatura (o Spotlight ou o XProtect ainda
+# estão lendo os arquivos): espera e tenta de novo
+for t in 1 2 3 4 5; do
+  hdiutil create -volname "LegendaPRO" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null && break
+  [ "$t" = 5 ] && { echo "hdiutil falhou 5 vezes"; exit 1; }
+  echo "    hdiutil ocupado (tentativa $t); tentando de novo em $((t * 10)) s"
+  sleep $((t * 10))
+done
 rm -rf "$STAGE"
 if [ -n "${APPLE_SIGN_ID:-}" ] && [ -n "${APPLE_ID:-}" ]; then
   codesign --force --sign "$APPLE_SIGN_ID" "$DMG"
