@@ -1,0 +1,2 @@
+# instalados com --no-deps (ver requirements-arm64.txt)
+mlx-whisper==0.4.3

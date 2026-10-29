@@ -48,6 +48,10 @@ PY="$RES/python/bin/python3"
 
 step "Dependências (requirements-$ARCH.txt)"
 "$PY" -m pip install --no-cache-dir --disable-pip-version-check -r "$HERE/requirements-$ARCH.txt"
+if [ -f "$HERE/requirements-$ARCH-nodeps.txt" ]; then
+  "$PY" -m pip install --no-cache-dir --disable-pip-version-check --no-deps -r "$HERE/requirements-$ARCH-nodeps.txt"
+fi
+"$PY" -c "import importlib.util as u; assert u.find_spec('torch') is None, 'torch entrou no pacote'" && echo "    sem torch"
 "$PY" -m pip uninstall -y pip >/dev/null 2>&1 || true            # o app não instala nada depois (sem CUDA no Mac)
 
 step "Código do motor e lançador"
