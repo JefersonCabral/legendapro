@@ -112,9 +112,10 @@ class Sprites:
             d.text((ox + m["adv"][i], base_y), ch, font=f, fill=255, anchor="ls")
         mask = np.asarray(im, np.float32) / 255.0
         # origem = ponto (x inicial do texto, baseline) dentro do sprite
-        spr = {"mask": mask, "ox": ox, "oy": base_y, "m": m}
-        self.cache[key] = spr
-        return spr
+        spr = {"mask": mask, "ox": ox, "oy": base_y, "m": m, "key": key}
+        # os quadros são desenhados em várias threads: se duas criarem o mesmo sprite, todas passam a usar
+        # o primeiro que entrou no cache (setdefault é atômico); a cópia que sobra é descartada sem uso
+        return self.cache.setdefault(key, spr)
 
 
 # ---------------------------------------------------------------- layout
@@ -776,7 +777,9 @@ class Renderer:
 
     def glow_img(self, spr, kind, G):
         """Brilho em camadas (soma de gaussianas da máscara), em cache por sprite."""
-        key = ("glow", id(spr), kind)
+        # chave pelo texto/papel/tamanho do sprite, e não id(spr): o Python reaproveita o id de um sprite
+        # descartado em outro, e esse outro ganhava o brilho da palavra errada (manchas nos presets com glow)
+        key = ("glow", spr["key"], kind)
         if key in self.sprites.cache:
             return self.sprites.cache[key]
         W = self.W
@@ -796,8 +799,7 @@ class Renderer:
                 g = cv2.GaussianBlur(big, (0, 0), sp)
             acc += g * o
         res = (np.clip(acc, 0, 1.5), pad)
-        self.sprites.cache[key] = res
-        return res
+        return self.sprites.cache.setdefault(key, res)
 
     def fill_img(self, tk, x0, y0, shape, op_scale=1.0):
         """Degradê radial na palavra (centro mais claro), em coordenadas da máscara."""
