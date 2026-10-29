@@ -1767,7 +1767,14 @@ async function connectEngine() {
   // por enquanto o motor só existe para Windows: no Mac/celular, avisa em vez de oferecer o .exe
   const plat = `${navigator.userAgentData?.platform || navigator.platform || ""} ${navigator.userAgent}`;
   const mobile = /Android|iPhone|iPad|iPod/i.test(plat) || navigator.userAgentData?.mobile;
-  if (mobile || /Mac/i.test(plat)) {
+  const mac = !mobile && /Mac/i.test(plat);
+  if (mac && cfg.DOWNLOAD_URL_MAC) {
+    // Mac com o motor publicado: baixa o .dmg; o Safari costuma barrar https → http://127.0.0.1
+    $("#gateDownload").href = cfg.DOWNLOAD_URL_MAC;
+    $("#gateDownload").textContent = "Baixar para Mac";
+    if (/Safari/i.test(navigator.userAgent) && !/Chrome|Chromium|Edg\//i.test(navigator.userAgent))
+      $("#gateWait").textContent = "no Mac, use o Chrome ou o Edge: o Safari não deixa a página falar com o motor do seu computador";
+  } else if (mobile || mac) {
     $("#gateTitle").textContent = mobile ? "O LegendaPRO roda num computador" : "Versão para Mac em breve";
     $("#gate .gate-card > p").textContent = mobile
       ? "O processamento acontece no motor instalado num computador com Windows 10/11. Abra este endereço no computador."

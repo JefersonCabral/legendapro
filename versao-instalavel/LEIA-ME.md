@@ -12,6 +12,8 @@ adaptada.
 |---|---|
 | `app/` | o motor (cópia adaptada do original) e a interface (`app/ui`) |
 | `build/` | monta o motor para Windows: Python embutido, dependências, ffmpeg, instalador e zip (ver `build/LEIA-ME.md`) |
+| `build/mac/` | monta o motor para Mac (`.app` + `.dmg`), rodado no GitHub Actions (ver `build/mac/LEIA-ME.md`) |
+| `build/ci_smoke.py` | teste de ponta a ponta do motor empacotado, no Windows ou no Mac. Com `LEGENDAPRO_FORCE_CPU=1`, simula um PC sem placa de vídeo |
 | `site/` | site estático para o Cloudflare Pages: página de download em `/` e o app em `/app/` (ver `site/LEIA-ME.md`) |
 | `dist/` | gerado pelo build (fora do git): `LegendaPRO-Setup.exe` (~178 MB) e o zip portátil (~251 MB) |
 
@@ -102,12 +104,9 @@ navegador ── https://<seu-site>/app/ ──► Cloudflare Pages (só HTML/JS
 ## Pendências
 
 - **Domínio:** quando definir o domínio do site, colocar em `SITE_ORIGINS` e gerar o instalador de novo.
-- **Mac:** precisa de uma versão própria do motor:
-  - mlx-whisper ou whisper.cpp com Metal;
-  - CoreML no recorte;
-  - `h264_videotoolbox`;
-  - `.dmg` gerado no GitHub Actions;
-  - assinatura Apple de US$ 99 por ano.
+- **Mac:** o motor já está preparado (mlx-whisper no chip Apple, CoreML, VideoToolbox, app na barra de menu) e o
+  `.dmg` é gerado e testado no GitHub Actions. Ver `build/mac/LEIA-ME.md`. Falta testar num Mac de verdade; depois,
+  preencher `DOWNLOAD_URL_MAC` no `site/config.js`. Sem a conta Apple, a primeira abertura pede "Abrir mesmo assim".
 - **Transcrição na placa AMD/Intel:** hoje vai para o processador. O caminho é o whisper.cpp com Vulkan, que exige
   compilar o binário.
 - **Licença:** o RVM é GPL-3.0, então distribuir com ele obriga a GPL e o código aberto. O ffmpeg do pacote é GPL

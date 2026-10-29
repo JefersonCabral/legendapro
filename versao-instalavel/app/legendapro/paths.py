@@ -7,6 +7,7 @@ DATA: dados da pessoa, sempre no PC dela: %LOCALAPPDATA%/LegendaPRO (ou LEGENDAP
 import hashlib
 import json
 import os
+import sys
 
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -16,6 +17,9 @@ def _data_dir():
         return os.environ["LEGENDAPRO_DATA"]
     if os.path.exists(os.path.join(APP, "portatil.txt")):
         return os.path.join(APP, "dados")
+    if sys.platform == "darwin":
+        # Mac: o app fica em /Applications (só leitura); os dados, na pasta padrão de cada usuário
+        return os.path.join(os.path.expanduser("~"), "Library", "Application Support", "LegendaPRO")
     base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".local", "share")
     return os.path.join(base, "LegendaPRO")
 

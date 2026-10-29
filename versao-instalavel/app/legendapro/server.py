@@ -12,6 +12,7 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -530,6 +531,7 @@ def job_transcribe(pid, model):
         with GPU_LOCK:
             m = transcript.get_model(model)
             job["message"] = ("Transcrevendo na placa de vídeo…" if getattr(m, "device_name", "") == "GPU"
+                              else "Transcrevendo no chip Apple…" if getattr(m, "device_name", "") == "Apple"
                               else "Transcrevendo no processador…")
 
             def prog(f):
@@ -1111,6 +1113,8 @@ class Handler(BaseHTTPRequestHandler):
         f = os.path.join(d, os.path.basename(self.body_json().get("file") or ""))
         if os.name == "nt":
             subprocess.Popen(["explorer", "/select," + f] if os.path.isfile(f) else ["explorer", d])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", f] if os.path.isfile(f) else ["open", d])   # Finder com o arquivo
         else:
             subprocess.Popen(["xdg-open", d])
         self.send_json({"ok": True})

@@ -1,0 +1,11 @@
+# Motor do LegendaPRO no Mac com chip Apple (M1…M4), macOS 14+. Versões fixas das partes principais;
+# as dependências delas o pip resolve (no Mac não há o conflito onnxruntime × onnxruntime-directml).
+numpy==2.4.4
+opencv-python-headless==5.0.0.93
+pillow==12.2.0
+faster-whisper==1.2.1          # reserva (processador) e o carregador de áudio
+ctranslate2==4.8.1
+onnxruntime==1.24.4            # traz o CoreML
+mlx-whisper==0.4.3             # transcrição no chip Apple (puxa o mlx)
+rumps==0.4.0                   # ícone na barra de menu
+pyobjc-framework-Cocoa==12.2.2

@@ -18,8 +18,27 @@
   var mobile = /Android|iPhone|iPad|iPod/i.test(plat) || (navigator.userAgentData && navigator.userAgentData.mobile);
   var mac = !mobile && /Mac/i.test(plat);
 
+  var macUrl = typeof cfg.DOWNLOAD_URL_MAC === "string" ? cfg.DOWNLOAD_URL_MAC : "";
+  var macIntelUrl = typeof cfg.DOWNLOAD_URL_MAC_INTEL === "string" ? cfg.DOWNLOAD_URL_MAC_INTEL : "";
+
   // Links de download
   document.querySelectorAll("[data-download]").forEach(function (a) {
+    if (mac && macUrl) {
+      // o navegador não diz com certeza se o Mac é chip Apple ou Intel: o botão é do chip Apple (a maioria)
+      // e o link do Intel aparece logo abaixo
+      a.setAttribute("href", macUrl);
+      a.setAttribute("download", macUrl.split("/").pop().split("?")[0]);
+      var lb = a.querySelector("span") || a;
+      lb.textContent = "Baixar para Mac (chip Apple)";
+      if (macIntelUrl && !a.classList.contains("btn-small")) {
+        var alt = document.createElement("a");
+        alt.className = "mac-alt";
+        alt.href = macIntelUrl;
+        alt.textContent = "Mac com processador Intel? Baixe esta versão";
+        a.insertAdjacentElement("afterend", alt);
+      }
+      return;
+    }
     if (mac || mobile) {
       a.setAttribute("href", "#perguntas");
       a.removeAttribute("download");

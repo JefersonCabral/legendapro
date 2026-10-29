@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>LegendaPRO</string>
+  <key>CFBundleDisplayName</key><string>LegendaPRO</string>
+  <key>CFBundleIdentifier</key><string>app.legendapro.motor</string>
+  <key>CFBundleVersion</key><string>__VERSION__</string>
+  <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleExecutable</key><string>LegendaPRO</string>
+  <key>CFBundleIconFile</key><string>LegendaPRO</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <!-- só o ícone "LP" na barra de menu, sem ícone no Dock -->
+  <key>LSUIElement</key><true/>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>LSApplicationCategoryType</key><string>public.app-category.video</string>
+  <!-- legendapro://abrir: o site abre o motor com um clique -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>app.legendapro.abrir</string>
+      <key>CFBundleURLSchemes</key><array><string>legendapro</string></array>
+    </dict>
+  </array>
+</dict>
+</plist>

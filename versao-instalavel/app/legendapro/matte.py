@@ -76,19 +76,23 @@ def _download(progress, cancel):
 
 
 def providers():
-    """DirectML (qualquer placa no Windows) > CUDA > processador, conforme o ONNX Runtime instalado."""
+    """DirectML (qualquer placa no Windows) > CoreML (Mac) > CUDA > processador, conforme o ONNX Runtime
+    instalado. LEGENDAPRO_FORCE_CPU=1: só o processador."""
     try:
         import onnxruntime as ort
         have = ort.get_available_providers()
     except Exception:
         return []
-    return [p for p in ("DmlExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider") if p in have]
+    if os.environ.get("LEGENDAPRO_FORCE_CPU") == "1":
+        return ["CPUExecutionProvider"] if "CPUExecutionProvider" in have else []
+    return [p for p in ("DmlExecutionProvider", "CoreMLExecutionProvider", "CUDAExecutionProvider",
+                        "CPUExecutionProvider") if p in have]
 
 
 def provider_label():
     p = (providers() or ["?"])[0]
-    return {"DmlExecutionProvider": "placa de vídeo (DirectML)", "CUDAExecutionProvider": "GPU NVIDIA (CUDA)",
-            "CPUExecutionProvider": "processador"}.get(p, "indisponível")
+    return {"DmlExecutionProvider": "placa de vídeo (DirectML)", "CoreMLExecutionProvider": "chip Apple (CoreML)",
+            "CUDAExecutionProvider": "GPU NVIDIA (CUDA)", "CPUExecutionProvider": "processador"}.get(p, "indisponível")
 
 
 def get_model(cpu=False):

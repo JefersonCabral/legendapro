@@ -228,17 +228,44 @@ _MODELS = {}
 DEFAULT_MODEL = "large-v3-turbo"
 
 
+# Mac com chip Apple: os mesmos modelos, convertidos para o MLX (comunidade mlx-community no Hugging Face)
+MLX_REPOS = {"large-v3-turbo": "mlx-community/whisper-large-v3-turbo", "large-v3": "mlx-community/whisper-large-v3-mlx",
+             "medium": "mlx-community/whisper-medium-mlx", "small": "mlx-community/whisper-small-mlx",
+             "tiny": "mlx-community/whisper-tiny-mlx"}
+
+
+def _use_mlx():
+    from .gpu import mlx_available
+    return mlx_available()
+
+
 def ensure_downloaded(name):
     """Baixa o modelo (uma vez) para a pasta de dados da pessoa e devolve a pasta dele. Fica separado da
     carga na placa: falta de internet não pode ser confundida com falha da CUDA, e o servidor baixa fora
     da trava da GPU (o download do large-v3-turbo tem ~1,6 GB)."""
     import os
-    from faster_whisper.utils import download_model
+    import time
     from .paths import MODEL_DIR
-    try:
-        return download_model(name, cache_dir=os.path.join(MODEL_DIR, "whisper"))
-    except Exception as e:
-        raise RuntimeError(f"não consegui baixar o modelo de transcrição (sem internet?): {e}") from e
+    for tentativa in range(3):          # conexão que cai no meio: tenta de novo (o download continua de onde parou)
+        try:
+            if _use_mlx():
+                from huggingface_hub import snapshot_download
+                return snapshot_download(MLX_REPOS.get(name, MLX_REPOS[DEFAULT_MODEL]),
+                                         cache_dir=os.path.join(MODEL_DIR, "whisper-mlx"))
+            from faster_whisper.utils import download_model
+            return download_model(name, cache_dir=os.path.join(MODEL_DIR, "whisper"))
+        except Exception as e:
+            if tentativa == 2:
+                raise RuntimeError(f"não consegui baixar o modelo de transcrição (sem internet?): {e}") from e
+            time.sleep(3 * (tentativa + 1))
+
+
+class _MlxModel:
+    """O mlx-whisper não tem objeto de modelo: guarda a pasta e transcreve por ela (ver transcribe)."""
+    device_name = "Apple"
+
+    def __init__(self, path):
+        self.path = path
 
 
 def _whisper(name, device):
@@ -259,6 +286,10 @@ def model_downloaded(name):
     import glob
     import os
     from .paths import MODEL_DIR
+    if _use_mlx():
+        repo = MLX_REPOS.get(name, MLX_REPOS[DEFAULT_MODEL]).replace("/", "--")
+        return bool(glob.glob(os.path.join(MODEL_DIR, "whisper-mlx", f"models--{repo}", "snapshots", "*", "*.safetensors"))
+                    or glob.glob(os.path.join(MODEL_DIR, "whisper-mlx", f"models--{repo}", "snapshots", "*", "*.npz")))
     return bool(glob.glob(os.path.join(MODEL_DIR, "whisper", f"models--*faster-whisper-{name}", "snapshots", "*", "model.bin")))
 
 
@@ -266,6 +297,10 @@ def get_model(name=DEFAULT_MODEL):
     """Carrega (uma vez) o Whisper; usa a GPU NVIDIA quando houver, senão o processador.
     A chave inclui o dispositivo: se a aceleração NVIDIA terminar de baixar, o próximo uso já vai para a GPU."""
     from .gpu import cuda_available, disable_cuda
+    if _use_mlx():
+        if (name, "mlx") not in _MODELS:
+            _MODELS[(name, "mlx")] = _MlxModel(ensure_downloaded(name))
+        return _MODELS[(name, "mlx")]
     dev = "cuda" if cuda_available() else "cpu"
     if (name, dev) in _MODELS:
         return _MODELS[(name, dev)]
@@ -286,6 +321,14 @@ def get_model(name=DEFAULT_MODEL):
 def transcribe(media, model=DEFAULT_MODEL, language="pt", progress=None):
     """progress(fração 0..1) é chamado conforme os trechos são reconhecidos."""
     m = get_model(model)
+    if isinstance(m, _MlxModel):
+        try:
+            return _transcribe_mlx(m, media, language, progress)
+        except Exception:
+            from .gpu import disable_mlx
+            disable_mlx()                   # chip Apple falhou: refaz com o faster-whisper no processador
+            _MODELS.pop((model, "mlx"), None)
+            return transcribe(media, model, language, progress)
     try:
         segs, info = m.transcribe(media, language=language, word_timestamps=True, vad_filter=True)
         words = []
@@ -304,6 +347,24 @@ def transcribe(media, model=DEFAULT_MODEL, language="pt", progress=None):
         disable_cuda()                      # não tenta a GPU de novo nesta sessão
         _MODELS.pop((model, "cuda"), None)
         return transcribe(media, model, language, progress)
+    return words
+
+
+def _transcribe_mlx(m, media, language, progress):
+    """Mac com chip Apple. O mlx-whisper não tem filtro de voz (VAD) nem aviso de progresso: o limite de
+    silêncio evita frases inventadas em trechos mudos, e o progresso só vai a 100% no fim."""
+    import mlx_whisper
+    r = mlx_whisper.transcribe(media, path_or_hf_repo=m.path, language=language, word_timestamps=True,
+                               verbose=None, condition_on_previous_text=False,
+                               hallucination_silence_threshold=2.0)
+    words = []
+    for s in r.get("segments", []):
+        for w in s.get("words", []):
+            t = (w.get("word") or "").strip()
+            if t:
+                words.append(Word(t, float(w["start"]), float(w["end"])))
+    if progress:
+        progress(1.0)
     return words
 
 

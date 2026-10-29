@@ -1,0 +1,10 @@
+# Motor do LegendaPRO no Mac Intel, macOS 14+. Transcrição e recorte no processador; exportação no
+# VideoToolbox. O onnxruntime parou de publicar para Mac Intel na 1.24: fica na 1.23.2.
+numpy==2.4.4
+opencv-python-headless==5.0.0.93
+pillow==12.2.0
+faster-whisper==1.2.1
+ctranslate2==4.8.1
+onnxruntime==1.23.2
+rumps==0.4.0
+pyobjc-framework-Cocoa==12.2.2

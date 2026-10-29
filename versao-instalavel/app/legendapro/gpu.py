@@ -1,11 +1,17 @@
-"""Hardware do PC da pessoa: placas de vídeo, aceleração do Whisper (CUDA) e encoder de vídeo.
+"""Hardware do PC da pessoa: placas de vídeo, aceleração do Whisper e encoder de vídeo.
 
+Windows:
 - Transcrição: faster-whisper na GPU NVIDIA (CUDA 12) quando houver; senão no processador (int8),
   que funciona em qualquer Intel ou AMD. As DLLs CUDA (~1 GB) não vêm no instalador: são baixadas uma
   vez para DATA/cuda quando o PC tem placa NVIDIA (install_cuda_pack).
-- Recorte da pessoa: ONNX Runtime com DirectML (qualquer placa no Windows) — ver matte.py.
+- Recorte da pessoa: ONNX Runtime com DirectML (qualquer placa) — ver matte.py.
 - Exportação: o primeiro encoder de hardware que funcionar de verdade neste PC (NVIDIA → AMD → Intel),
   senão libx264 no processador.
+Mac:
+- Transcrição: mlx-whisper no chip Apple (M1…M4); Mac Intel usa o faster-whisper no processador.
+- Recorte: ONNX Runtime com CoreML. Exportação: VideoToolbox (hardware de todo Mac), senão libx264.
+
+LEGENDAPRO_FORCE_CPU=1 desliga toda aceleração (teste de PC sem placa de vídeo, ou placa com problema).
 """
 import glob
 import os
@@ -20,6 +26,8 @@ CUDA_DIR = os.path.join(DATA, "cuda")
 # dar CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH com o cudnn64_9.dll que vem no ctranslate2)
 CUDA_PKGS = ["nvidia-cublas-cu12==12.9.2.10", "nvidia-cuda-nvrtc-cu12==12.9.86", "nvidia-cudnn-cu12==9.24.0.43"]
 NOWIN = 0x08000000 if sys.platform == "win32" else 0    # CREATE_NO_WINDOW: sem janela piscando
+MAC = sys.platform == "darwin"
+FORCE_CPU = os.environ.get("LEGENDAPRO_FORCE_CPU") == "1"
 
 _lock = threading.RLock()     # reentrante: uma detecção usa outra (encoder -> placas)
 _cache = {}
@@ -43,8 +51,13 @@ def _reset(key):
 # ---------------------------------------------------------------- placas
 
 def gpu_names():
-    """Nomes das placas de vídeo (Windows), ex.: ['NVIDIA GeForce GTX 1650', 'AMD Radeon(TM) Graphics']."""
+    """Nomes das placas de vídeo, ex.: ['NVIDIA GeForce GTX 1650', 'AMD Radeon(TM) Graphics'] ou ['Apple M2']."""
     def get():
+        if MAC:
+            import json
+            r = subprocess.run(["system_profiler", "-json", "SPDisplaysDataType"], capture_output=True, text=True,
+                               errors="replace", timeout=30, stdin=subprocess.DEVNULL)
+            return [d.get("sppci_model") or d.get("_name", "") for d in json.loads(r.stdout).get("SPDisplaysDataType", [])]
         if sys.platform != "win32":
             return []
         r = subprocess.run(["powershell", "-NoProfile", "-Command",
@@ -89,9 +102,39 @@ def cpu_name():
                                capture_output=True, text=True, errors="replace", timeout=20, stdin=subprocess.DEVNULL,
                                creationflags=NOWIN)
             return r.stdout.strip().splitlines()[0].strip()
+        if MAC:
+            r = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True,
+                               timeout=10, stdin=subprocess.DEVNULL)
+            return r.stdout.strip()
         import platform
         return platform.processor()
     return _once("cpu", get) or "processador"
+
+
+def apple_silicon():
+    import platform
+    return MAC and platform.machine() == "arm64"
+
+
+def mlx_available():
+    """Transcrição no chip Apple (mlx-whisper; só Mac M1…M4 com macOS 14+)."""
+    def get():
+        if FORCE_CPU or not apple_silicon():
+            return False
+        import mlx.core as mx
+        import mlx_whisper  # noqa: F401
+        # Mac virtual (ex.: as máquinas do GitHub) não tem o Metal liberado: aí o processador é melhor
+        if not mx.metal.is_available():
+            return False
+        mx.eval(mx.array([1.0]) + 1)
+        return True
+    return bool(_once("mlx", get))
+
+
+def disable_mlx():
+    """O MLX falhou de verdade: transcreve com o faster-whisper no processador nesta sessão."""
+    with _lock:
+        _cache["mlx"] = False
 
 
 # ---------------------------------------------------------------- CUDA (Whisper)
@@ -126,6 +169,8 @@ def cuda_pack_ready():
 
 def cuda_available():
     def get():
+        if FORCE_CPU or MAC:
+            return False
         if sys.platform == "win32" and not has_nvidia():
             return False
         if not cuda_pack_ready():
@@ -188,6 +233,11 @@ ENCODERS = {
                        "-pix_fmt", "yuv420p"]),
     "qsv": ("h264_qsv", "Intel Quick Sync",
             lambda q: ["-preset", "slow", "-global_quality", str(q), "-pix_fmt", "nv12"]),
+    # Mac: qualidade constante (-q:v, 1–100, maior = melhor) no chip Apple; Mac Intel antigo só aceita bitrate
+    "vt": ("h264_videotoolbox", "Apple VideoToolbox",
+           lambda q: ["-q:v", str(max(40, min(90, 140 - 4 * q))), "-pix_fmt", "yuv420p"]),
+    "vt_br": ("h264_videotoolbox", "Apple VideoToolbox",
+              lambda q: ["-b:v", f"{max(6, 30 - q)}M", "-pix_fmt", "yuv420p"]),
     "x264": ("libx264", "processador (x264)",
              lambda q: ["-preset", "medium", "-crf", str(q), "-pix_fmt", "yuv420p"]),
 }
@@ -195,6 +245,8 @@ FAST = {   # cópia leve para a prévia
     "nvenc": ["-cq", "23", "-pix_fmt", "yuv420p"],
     "amf": ["-rc", "cqp", "-qp_i", "23", "-qp_p", "25", "-pix_fmt", "yuv420p"],
     "qsv": ["-global_quality", "23", "-pix_fmt", "nv12"],
+    "vt": ["-q:v", "50", "-pix_fmt", "yuv420p"],
+    "vt_br": ["-b:v", "4M", "-pix_fmt", "yuv420p"],
     "x264": ["-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"],
 }
 
@@ -219,6 +271,10 @@ def best_encoder():
     """'nvenc' | 'amf' | 'qsv' | 'x264'. Só testa os da marca que o PC tem (mais rápido e sem falso positivo);
     se não deu para saber as marcas, testa todos."""
     def get():
+        if FORCE_CPU:
+            return "x264"
+        if MAC:
+            return next((k for k in ("vt", "vt_br") if _works(k)), "x264")
         v = vendors()
         for key, vendor in (("nvenc", "nvidia"), ("amf", "amd"), ("qsv", "intel")):
             if (vendor in v or not v) and _works(key):
@@ -259,9 +315,9 @@ def summary():
     return {
         "gpus": gpu_names(),
         "cpu": cpu_name(),
-        "whisper": "GPU NVIDIA (CUDA)" if cuda_available() else "processador",
+        "whisper": "GPU NVIDIA (CUDA)" if cuda_available() else ("chip Apple (MLX)" if mlx_available() else "processador"),
         "encoder": ENCODERS[enc][1],
         "encoder_hw": enc != "x264",
         "matte": matte.provider_label(),
-        "cuda_pack": dict(PACK, needed=has_nvidia() and not cuda_pack_ready()),
+        "cuda_pack": dict(PACK, needed=not FORCE_CPU and has_nvidia() and not cuda_pack_ready()),
     }
