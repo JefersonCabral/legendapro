@@ -27,7 +27,9 @@ def ocupada(porta):
 def e_legendapro(porta):
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{porta}/api/status", timeout=15) as r:
-            return r.status == 200 and b"default_model" in r.read()
+            # só o motor desta versão (com "engine"): um LegendaPRO antigo/de desenvolvimento na mesma porta
+            # não conta, senão o lançador sai achando que já está aberto e o site nunca encontra o motor
+            return r.status == 200 and b'"engine": "legendapro"' in r.read()
     except Exception:
         return False
 
