@@ -56,8 +56,10 @@ def main():
     video = a.video or make_video(tmp, ffmpeg)
     B = f"http://127.0.0.1:{a.port}"
     env = dict(os.environ, LEGENDAPRO_DATA=data, PYTHONNOUSERSITE="1", PYTHONUTF8="1")
-    srv = subprocess.Popen([a.python, "-m", "legendapro.server", "--port", str(a.port), "--no-browser"],
-                           cwd=a.app, env=env, stdin=subprocess.DEVNULL)
+    log_path = os.path.join(tmp, "motor.log")
+    srv_log = open(log_path, "w", encoding="utf-8")
+    srv = subprocess.Popen([a.python, "-u", "-m", "legendapro.server", "--port", str(a.port), "--no-browser"],
+                           cwd=a.app, env=env, stdin=subprocess.DEVNULL, stdout=srv_log, stderr=subprocess.STDOUT)
     fails = []
 
     def req(method, path, body=None, headers=None):
@@ -75,14 +77,23 @@ def main():
             if time.time() - t0 > limit:
                 raise RuntimeError(f"{label}: passou de {limit}s")
         print(f"  {label}: {j['status']} em {time.time() - t0:.1f}s {j.get('error') or ''}", flush=True)
+        note("notice" if j["status"] == "done" else "error", f"{label}: {j['status']} em {time.time() - t0:.1f}s {j.get('error') or ''}")
         if j["status"] != "done":
             raise RuntimeError(f"{label}: {j.get('error')}")
         return j
+
+    gha = bool(os.environ.get("GITHUB_ACTIONS"))
+
+    def note(kind, msg):
+        # no GitHub Actions, vira anotação (aparece na página do build e na API pública do job)
+        if gha:
+            print(f"::{kind}::" + msg.replace("%", "%25").replace("\r", "").replace("\n", "%0A"), flush=True)
 
     def check(cond, msg):
         print(("  ok   " if cond else "  FALHA ") + msg, flush=True)
         if not cond:
             fails.append(msg)
+            note("error", msg)
 
     def probe(path):
         r = subprocess.run([ffprobe, "-v", "error", "-show_entries", "stream=codec_name,nb_frames", "-of", "json", path],
@@ -101,6 +112,7 @@ def main():
         else:
             raise RuntimeError("o motor não respondeu")
         print("hardware:", json.dumps(st["hw"], ensure_ascii=False), flush=True)
+        note("notice", "hardware: " + json.dumps(st["hw"], ensure_ascii=False))
         check(st.get("engine") == "legendapro", "status responde como motor do LegendaPRO")
         # segurança: outro site não pode usar o motor
         try:
@@ -137,12 +149,18 @@ def main():
     except Exception as e:
         fails.append(str(e))
         print("  FALHA", e, flush=True)
+        note("error", f"{type(e).__name__}: {e}")
+        try:                                   # o motor costuma explicar o erro no próprio log
+            note("error", "últimas linhas do motor:\n" + "".join(open(log_path, encoding="utf-8", errors="replace").readlines()[-25:]))
+        except OSError:
+            pass
     finally:
         srv.terminate()
         try:
             srv.wait(10)
         except subprocess.TimeoutExpired:
             srv.kill()
+        srv_log.close()
         shutil.rmtree(tmp, ignore_errors=True)
     print("\nRESULTADO:", "tudo certo" if not fails else f"{len(fails)} falha(s): {fails}")
     sys.exit(1 if fails else 0)
