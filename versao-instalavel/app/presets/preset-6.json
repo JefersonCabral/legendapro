@@ -1,0 +1,166 @@
+{
+  "name": "preset-6",
+  "title": "Preset 6",
+  "description": "Referência v6: palavras pequenas brancas em Inter Tight sobre um destaque amarelo com degradê, halo e raios de luz que atravessam a palavra (só em algumas palavras); serifada fina para o nome que completa o destaque; a narração normal entra seca, como no preset 4.",
+  "fonts": {
+    "sans": {
+      "file": "InterTight-VF.ttf",
+      "weight": 400,
+      "tracking": -0.03
+    },
+    "hero": {
+      "file": "InterTight-VF.ttf",
+      "weight": 750,
+      "tracking": -0.05
+    },
+    "serif": {
+      "file": "Playfair2-Italic-VF.ttf",
+      "axes": {
+        "opsz": 1200,
+        "wdth": 87,
+        "wght": 300
+      },
+      "tracking": -0.03
+    }
+  },
+  "layout": {
+    "anchor_mode": "baseline",
+    "anchor_y": 0.595,
+    "plain_anchor_y": 0.54,
+    "safe_width": 0.86,
+    "base_size": 0.088,
+    "support_scale": 1.0,
+    "hero_scale": 1.84,
+    "hero_max_width": 0.56,
+    "serif_scale": 1.7,
+    "hero_short_scale": 1.4,
+    "hero_short_chars": 4,
+    "above_align": "center",
+    "above_indent": 0.0,
+    "below_align": "center",
+    "below_indent": 0.0,
+    "indent_fit": 1.0,
+    "gap_above": 0.045,
+    "gap_below": 0.04,
+    "serif_drop": 0.085,
+    "serif_indent": 0.04
+  },
+  "colors": {
+    "text": "#FFFFFF",
+    "hero": "#F5E314",
+    "hero_fill": {
+      "inner": "#F9FF55",
+      "radius": 0.5
+    },
+    "red": "#FF3B30",
+    "accent": "#F5E314"
+  },
+  "effects": {
+    "shadow": {
+      "opacity": 0.0,
+      "blur": 0.005,
+      "offset_y": 0.0
+    },
+    "gradient": {
+      "enabled": false,
+      "top": 0.45,
+      "full": 0.95,
+      "opacity": 0.55,
+      "curve": 1.3,
+      "color": "#000000"
+    },
+    "glow": {
+      "hero": {
+        "layers": [
+          [
+            0.007,
+            0.2
+          ],
+          [
+            0.045,
+            0.8
+          ]
+        ],
+        "color": "#FFE600",
+        "blend": "screen",
+        "opacity": 0.6
+      }
+    },
+    "rays": {
+      "enabled": true,
+      "length": 0.11,
+      "decay": 0.05,
+      "gain": 0.42,
+      "color": "#FFE600",
+      "turn_at": 0.5,
+      "turn_span": 1.0,
+      "sweep_ease": "linear",
+      "samples": 18
+    },
+    "anim": {
+      "plain": {
+        "type": "cut",
+        "reveal": "scene"
+      },
+      "support": {
+        "type": "fade",
+        "reveal": "word",
+        "duration": 0.32,
+        "fade": 0.32,
+        "dist": 0.0
+      },
+      "hero": {
+        "type": "rise",
+        "reveal": "word",
+        "duration": 0.24,
+        "fade": 0.16,
+        "from": [
+          "below",
+          "right",
+          "above"
+        ],
+        "dist": 0.09,
+        "motion_blur": 2.2,
+        "ease": "out_cubic"
+      },
+      "serif": {
+        "type": "fade",
+        "reveal": "word",
+        "duration": 0.28,
+        "fade": 0.25,
+        "blur": 0.012
+      }
+    },
+    "exit": {
+      "type": "cut"
+    },
+    "lead": 0.02
+  },
+  "rules": {
+    "engine": "phrase",
+    "emphasis_threshold": 2.4,
+    "emphasis_every": 6.0,
+    "emphasis_gap": 4.0,
+    "phrase_max_words": 7,
+    "support_max_words": 2,
+    "support_max_chars": 14,
+    "chunk_max_words": 4,
+    "chunk_max_chars": 18,
+    "chunk_pause": 0.35,
+    "max_hold": 0.85,
+    "case": "keep",
+    "strip_punct": ".,!?;:…",
+    "hero_number_unit": true,
+    "serif_tail": true,
+    "article_alone": false
+  },
+  "effect_notes": {
+    "red": "palavra na cor de destaque vermelha",
+    "circle": "elipse desenhada em volta",
+    "underline": "traço desenhado embaixo da linha",
+    "box": "caixa chapada atrás da linha",
+    "break": "começa um bloco novo depois desta palavra",
+    "color": "cor só desta palavra",
+    "destaque": "palavra amarela com degradê, halo e raios de luz atravessando"
+  }
+}

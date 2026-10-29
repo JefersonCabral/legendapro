@@ -1,0 +1,102 @@
+{
+  "name": "preset-5",
+  "title": "Preset 5",
+  "description": "Referência v5: uma ou duas palavras por vez em Inter Display SemiBold branca, centralizada, troca seca sem animação, linha de base fixa. Simples e limpa.",
+  "fonts": {
+    "sans": {
+      "file": "InterDisplay-SemiBold.ttf",
+      "tracking": -0.062
+    },
+    "hero": {
+      "file": "InterDisplay-SemiBold.ttf",
+      "tracking": -0.062
+    },
+    "serif": {
+      "file": "InterDisplay-SemiBold.ttf",
+      "tracking": -0.062
+    }
+  },
+  "layout": {
+    "anchor_mode": "baseline",
+    "anchor_y": 0.5795,
+    "safe_width": 0.86,
+    "base_size": 0.066,
+    "support_scale": 1.0,
+    "hero_scale": 1.6,
+    "hero_max_width": 0.86,
+    "serif_scale": 1.0,
+    "gap_above": 0.02,
+    "gap_below": 0.02
+  },
+  "colors": {
+    "text": "#FFFFFF",
+    "hero": "#FFFFFF",
+    "red": "#FF3B30",
+    "accent": "#FFFFFF"
+  },
+  "effects": {
+    "shadow": {
+      "opacity": 0.0,
+      "blur": 0.005,
+      "offset_y": 0.0
+    },
+    "gradient": {
+      "enabled": false,
+      "top": 0.45,
+      "full": 0.95,
+      "opacity": 0.75,
+      "curve": 1.0,
+      "color": "#000000"
+    },
+    "glow": {},
+    "anim": {
+      "plain": {
+        "type": "cut",
+        "reveal": "scene"
+      },
+      "support": {
+        "type": "cut",
+        "reveal": "scene"
+      },
+      "hero": {
+        "type": "cut",
+        "reveal": "scene"
+      },
+      "serif": {
+        "type": "cut",
+        "reveal": "scene"
+      }
+    },
+    "exit": {
+      "type": "cut"
+    },
+    "lead": 0.02
+  },
+  "rules": {
+    "engine": "phrase",
+    "emphasis_threshold": 2.4,
+    "emphasis_every": 0,
+    "emphasis_gap": 2.0,
+    "phrase_max_words": 7,
+    "support_max_words": 3,
+    "support_max_chars": 18,
+    "chunk_max_words": 2,
+    "chunk_max_chars": 12,
+    "chunk_pause": 0.35,
+    "max_hold": 1.0,
+    "case": "keep",
+    "strip_punct": ",;:",
+    "hero_number_unit": true,
+    "serif_tail": false,
+    "article_alone": true
+  },
+  "effect_notes": {
+    "red": "palavra na cor de destaque vermelha",
+    "circle": "elipse desenhada em volta",
+    "underline": "traço desenhado embaixo da linha",
+    "box": "caixa chapada atrás da linha",
+    "break": "começa um bloco novo depois desta palavra",
+    "color": "cor só desta palavra",
+    "destaque": "palavra 1,6× maior (o 'zoom' da referência)"
+  }
+}

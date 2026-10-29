@@ -1,0 +1,173 @@
+{
+  "name": "preset-3",
+  "title": "Preset 3",
+  "description": "Referência v3: minúsculas brancas com brilho suave, palavra-chave enorme em Geist com halo branco, palavras surgindo uma a uma com subida, gradiente escuro embaixo.",
+  "fonts": {
+    "sans": {
+      "file": "DMSans-VF.ttf",
+      "axes": {
+        "wght": 500,
+        "opsz": 14
+      },
+      "tracking": -0.02
+    },
+    "hero": {
+      "file": "Geist-VF.ttf",
+      "weight": 700,
+      "tracking": -0.1
+    },
+    "serif": {
+      "file": "Playfair2-Italic-VF.ttf",
+      "axes": {
+        "opsz": 1200,
+        "wdth": 87,
+        "wght": 300
+      },
+      "tracking": -0.03
+    }
+  },
+  "layout": {
+    "anchor_mode": "top",
+    "anchor_y": 0.608,
+    "safe_width": 0.86,
+    "base_size": 0.09,
+    "support_scale": 1.0,
+    "hero_scale": 3.07,
+    "hero_max_width": 0.75,
+    "serif_scale": 1.6,
+    "above_align": "left",
+    "above_indent": 0.075,
+    "below_align": "right",
+    "below_indent": 0.03,
+    "indent_fit": 1.0,
+    "gap_above": 0.03,
+    "gap_below": 0.022
+  },
+  "colors": {
+    "text": "#FFFFFF",
+    "hero": "#FFFFFF",
+    "red": "#FF3B30",
+    "accent": "#FFFFFF"
+  },
+  "effects": {
+    "shadow": {
+      "opacity": 0.0,
+      "blur": 0.005,
+      "offset_y": 0.0
+    },
+    "gradient": {
+      "enabled": true,
+      "top": 0.48,
+      "full": 1.0,
+      "opacity": 0.88,
+      "curve": 1.0,
+      "color": "#000000"
+    },
+    "glow": {
+      "hero": {
+        "layers": [
+          [
+            0.012,
+            0.1
+          ],
+          [
+            0.033,
+            0.3
+          ],
+          [
+            0.1,
+            0.45
+          ]
+        ],
+        "color": "#FFFFFF",
+        "blend": "screen"
+      },
+      "plain": {
+        "layers": [
+          [
+            0.006,
+            0.15
+          ]
+        ],
+        "color": "#FFFFFF",
+        "blend": "screen"
+      },
+      "support": {
+        "layers": [
+          [
+            0.006,
+            0.15
+          ]
+        ],
+        "color": "#FFFFFF",
+        "blend": "screen"
+      }
+    },
+    "anim": {
+      "plain": {
+        "type": "rise",
+        "reveal": "word",
+        "duration": 0.32,
+        "fade": 0.3,
+        "from": "below",
+        "dist": 0.046
+      },
+      "support": {
+        "type": "rise",
+        "reveal": "word",
+        "duration": 0.32,
+        "fade": 0.3,
+        "from": "below",
+        "dist": 0.046
+      },
+      "hero": {
+        "type": "rise",
+        "reveal": "word",
+        "duration": 0.5,
+        "fade": 0.45,
+        "from": "below",
+        "dist": 0.075,
+        "blur": 0.008
+      },
+      "serif": {
+        "type": "rise",
+        "reveal": "word",
+        "duration": 0.32,
+        "fade": 0.3,
+        "from": "below",
+        "dist": 0.03
+      }
+    },
+    "exit": {
+      "type": "cut"
+    },
+    "lead": 0.02
+  },
+  "rules": {
+    "engine": "phrase",
+    "emphasis_threshold": 2.4,
+    "emphasis_every": 3.0,
+    "emphasis_gap": 2.0,
+    "phrase_max_words": 7,
+    "support_max_words": 3,
+    "support_max_chars": 18,
+    "chunk_max_words": 4,
+    "chunk_max_chars": 18,
+    "chunk_pause": 0.35,
+    "max_hold": 0.8,
+    "case": "lower",
+    "strip_punct": ".,!?;:…",
+    "hero_number_unit": true,
+    "serif_tail": false,
+    "article_alone": false
+  },
+  "effect_notes": {
+    "red": "palavra na cor de destaque vermelha",
+    "circle": "elipse desenhada em volta",
+    "underline": "traço desenhado embaixo da linha",
+    "box": "caixa chapada atrás da linha",
+    "break": "começa um bloco novo depois desta palavra",
+    "color": "cor só desta palavra",
+    "destaque": "palavra branca enorme com halo de luz, subindo"
+  }
+}

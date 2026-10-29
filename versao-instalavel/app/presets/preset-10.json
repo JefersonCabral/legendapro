@@ -1,0 +1,171 @@
+{
+  "name": "preset-10",
+  "title": "Preset 10",
+  "description": "Referência v9 (podcast): legenda no topo numa caixa estreita; Inicial Maiúscula Em Toda Palavra; a linha com palavra-chave cresce até preencher a caixa (palavra-chave em Inter Bold Italic, misturada com o vídeo em diferença; as pequenas ficam 1,85× menores na mesma linha); palavras pequenas deslizam da esquerda, a chave sobe de baixo; linhas curtas em zigue-zague.",
+  "fonts": {
+    "sans": {
+      "file": "Inter-VF.ttf",
+      "axes": {
+        "opsz": 18,
+        "wght": 420
+      },
+      "tracking": -0.1,
+      "space_scale": 0.25
+    },
+    "hero": {
+      "file": "Inter-Italic-VF.ttf",
+      "axes": {
+        "opsz": 18,
+        "wght": 700
+      },
+      "tracking": -0.075,
+      "space_scale": 0.25
+    },
+    "serif": {
+      "file": "Inter-Italic-VF.ttf",
+      "axes": {
+        "opsz": 18,
+        "wght": 700
+      },
+      "tracking": -0.075
+    }
+  },
+  "layout": {
+    "anchor_mode": "center",
+    "anchor_y": 0.72,
+    "safe_width": 0.41,
+    "base_size": 0.0675,
+    "hero_scale": 1.85,
+    "hero_ratio": 1.85,
+    "hero_max_size": 0.12,
+    "serif_scale": 1.85,
+    "gap_lines": 0.011,
+    "gap_above": 0.016,
+    "hero_line_gap": 0.94,
+    "stagger_indent": 0.025
+  },
+  "colors": {
+    "text": "#FFFFFF",
+    "hero": "#FFFFFF",
+    "red": "#FF3B30",
+    "accent": "#FFFFFF"
+  },
+  "effects": {
+    "shadow": {
+      "opacity": 0.8,
+      "blur": 0.011,
+      "offset_y": 0.0
+    },
+    "blend": {
+      "enabled": true,
+      "mode": "difference",
+      "opacity": 1.0,
+      "roles": [
+        "hero"
+      ]
+    },
+    "gradient": {
+      "enabled": false,
+      "top": 0.45,
+      "full": 0.95,
+      "opacity": 0.75,
+      "curve": 1.0,
+      "color": "#000000"
+    },
+    "glow": {},
+    "anim": {
+      "plain": {
+        "type": "slide",
+        "reveal": "word",
+        "duration": 0.34,
+        "ease": "linear",
+        "fade_with_motion": true,
+        "opacity_from": 0.0,
+        "from": "left",
+        "dist": 0.044,
+        "until": "word_end"
+      },
+      "support": {
+        "type": "slide",
+        "reveal": "word",
+        "duration": 0.34,
+        "ease": "linear",
+        "fade_with_motion": true,
+        "opacity_from": 0.0,
+        "from": "left",
+        "dist": 0.044,
+        "until": "word_end"
+      },
+      "hero": {
+        "type": "rise",
+        "reveal": "word",
+        "duration": 0.26,
+        "ease": "linear",
+        "fade_with_motion": true,
+        "opacity_from": 0.0,
+        "from": "below",
+        "dist": 0.0174,
+        "until": "word_end"
+      },
+      "serif": {
+        "type": "rise",
+        "reveal": "word",
+        "duration": 0.26,
+        "ease": "linear",
+        "fade_with_motion": true,
+        "opacity_from": 0.0,
+        "from": "below",
+        "dist": 0.0174,
+        "until": "word_end"
+      }
+    },
+    "exit": {
+      "type": "cut"
+    },
+    "lead": 0.0
+  },
+  "rules": {
+    "engine": "phrase",
+    "emphasis_threshold": 1.9,
+    "emphasis_every": 1.3,
+    "emphasis_gap": 0.7,
+    "phrase_max_words": 9,
+    "support_max_words": 4,
+    "support_max_chars": 16,
+    "chunk_max_words": 3,
+    "chunk_max_chars": 16,
+    "chunk_pause": 0.35,
+    "max_hold": 0.15,
+    "case": "title",
+    "strip_punct": ",;",
+    "hero_number_unit": true,
+    "serif_tail": false,
+    "article_alone": false,
+    "layout_engine": "fill",
+    "block_max_words": 7,
+    "block_max_dur": 2.4,
+    "block_pause": 0.8,
+    "max_lines": 2,
+    "hero_lead_words": 3,
+    "hero_tail_words": 1,
+    "max_heroes_per_block": 2,
+    "intro_alone": [
+      "sim",
+      "olha",
+      "veja",
+      "então",
+      "e",
+      "mas",
+      "ou seja"
+    ]
+  },
+  "effect_notes": {
+    "red": "palavra na cor de destaque vermelha",
+    "circle": "elipse desenhada em volta",
+    "underline": "traço desenhado embaixo da linha",
+    "box": "caixa chapada atrás da linha",
+    "break": "começa um bloco novo depois desta palavra",
+    "color": "cor só desta palavra",
+    "destaque": "palavra em negrito itálico que cresce até preencher a linha (modo diferença)"
+  }
+}

@@ -189,22 +189,65 @@ Presets novos: botão "Salvar como novo preset" na aba Estilo, ou copiar um JSON
 - Contraste: `--muted #a39789`, `--faint #7e7369`; textos de ajuda ≥ 11 px.
 - **Análise de usabilidade (out/2026)** feita e aplicada por completo. Verificação: bateria no navegador com os 11 presets (todas as palavras no texto visual, cada efeito muda texto e plano, desfazer volta exato, cor, 0 erros JS), envio + transcrição, exportação + selo desatualizado, prévia, arrastar, apagar com confirmação, salvar/apagar estilo.
 
+## Versão para distribuir (`versao-instalavel/`, out/2026)
+
+Pedido do dono: deixar a ferramenta "online", com o processamento no PC de quem usa (NVIDIA, AMD, Intel ou só CPU), site no **Cloudflare** e dados no PC da pessoa. Modelo escolhido por ele: **híbrido**. A pessoa abre o site e usa a interface ali; o motor instalado no PC faz tudo, e a página fala com ele em `127.0.0.1:7860–7869`. O original (`legendapro/`, `ui/`) **não foi tocado**: a pasta `versao-instalavel/` tem uma cópia adaptada. Detalhes, medidas e pendências estão em `versao-instalavel/LEIA-ME.md`.
+
+- `app/`: motor adaptado. Mudanças principais:
+  - `paths.py`: dados em `%LOCALAPPDATA%\LegendaPRO`, ffmpeg embutido e presets por manifesto;
+  - `gpu.py`: encoder por marca, CUDA baixada sob demanda e volta para a CPU;
+  - `matte.py`: ONNX + DirectML;
+  - `server.py`: CORS, Host e Origin.
+- Interface: `app.js` com `ENGINE` / `E()` e descoberta do motor.
+- **Paridade:** 396 de 396 combinações idênticas ao original. Ao mudar o motor original, levar a mudança para a cópia, ou unificar os dois.
+- `build/`:
+  - `build.ps1`: Python 3.12 embutido, `requirements-dist.txt` fechado com `--no-deps` (por causa do onnxruntime-directml), ffmpeg 7.1.1 e Inno Setup (instalado por usuário via winget);
+  - saída: `dist/LegendaPRO-Setup.exe` (~178 MB) e o zip;
+  - `iniciar.py` é o lançador (ver se já está aberto, protocolo `legendapro://`);
+  - `make_site.py` copia `app/ui` para `site/app`.
+- `site/`: página de download, o app em `/app/` e `_headers` com CSP própria para `/app/*`, sem `upgrade-insecure-requests`.
+- **Domínio ainda não definido:** `SITE_ORIGINS` em `app/legendapro/__init__.py` aceita `legendapro.pages.dev`. Trocar quando o dono decidir e gerar o instalador de novo.
+- **Mac:** ainda não. O dono perguntou. O caminho seria:
+  - mlx-whisper;
+  - CoreML;
+  - videotoolbox;
+  - `.dmg` gerado no GitHub Actions;
+  - assinatura Apple de US$ 99 por ano.
+
+  Hoje o site mostra "Versão para Mac em breve".
+
 ## Vídeos já processados
 
 - **Referências** (`ref/`): `tools/clean.py` gerou versões sem a legenda gravada, para testes. Ainda sobram restos ("fantasmas") da legenda original.
 - **Woman speaking (IA)** (`projects_cli/woman/` e projeto da UI `8f75e21b8e48`):
   - 10 s, 720×1280, 24 fps, 30 palavras transcritas sem erro.
   - Saídas em `Downloads/Woman_legendado_desculpa.mp4` e `Downloads/Woman_legendado_galho.mp4`.
+- **Projetos de teste do texto atrás da pessoa** (na UI, com recorte pronto e trechos marcados; podem ser apagados):
+  - "TESTE ATRÁS" `7e57a11c0de4`: cópia do "senhorvideo", que é VFR (24 quadros reais declarados a 60 fps);
+  - "TESTE Woman" `3adab87cc8a7`: a mulher falando sobre IA, 10 s, 24 fps. Close no começo; no fim corta para um plano aberto na bancada;
+  - "TESTE PARTE 1" `22c51713094b`: homem de corpo inteiro, 8 s.
+- Projetos do dono na UI: "PARTE 1" `0aa8983fe3ea`, "senhorvideo" `e85aca749034`, "PARTE 2" (criado por ele). Testes sempre em cópias, nunca nos dele.
 
 ## Lições operacionais
 
 - Nunca matar todos os processos python. Para parar o servidor, achar o PID com `netstat -ano | grep :7860` e matar só esse.
 - Não contornar bloqueios de remoção com glob. Usar uma pasta nova.
 - Rodar renders pesados em sequência, não em paralelo: a GPU tem só 4 GB.
-- No git ficam fora: `projects/`, `projects_cli/`, `out/`, `ref/`, `analysis/`, `presets/_thumbs/` e arquivos de vídeo.
+- No git ficam fora: `projects/`, `projects_cli/`, `out/`, `ref/`, `analysis/`, `presets/_thumbs/`, `models/` e arquivos de vídeo.
+- **Testar a UI sem o navegador do dono:** há dois Chrome conectados à conta (Windows e macOS), e a extensão exige que ele escolha qual usar, o que ele prefere evitar. Para validar, usar o Chrome headless controlado por CDP com Node (WebSocket nativo do Node 24): `chrome.exe --headless=new --remote-debugging-port=9333 --autoplay-policy=no-user-gesture-required --user-data-dir=<temp>`, depois `Runtime.evaluate` com `awaitPromise` e `Page.captureScreenshot`. Antes de navegar, gravar `lp.last` no localStorage para abrir o projeto. Assim já foram feitos o teste de arrastar a agulha (`scrub_test.mjs`) e o de sincronia no play.
+- `Runtime.evaluate` (extensão ou CDP) estoura em ~45 s: baterias longas rodam em segundo plano na página (`window.__res`) e o resultado é lido depois.
+- No console do Windows, `print` com caracteres fora do cp1252 (ex.: ≠) quebra o script: usar `PYTHONIOENCODING=utf-8` e gravar os resultados em JSON.
+- Edição por script com heredoc: escapes (`\{`, `\n`, a `\` de continuação de linha) costumam não bater ou viram o caractere de verdade; para trechos com barra invertida, usar a ferramenta Edit.
+- O dono quer revisão: ao terminar algo grande, rodar as baterias de novo (`stress.py`, `stress_behind.py`, `fidelity.py`, `behind_auto.py` na pasta temporária da sessão; recriar se sumirem) e fazer uma revisão de código independente.
 
 ## Ideias para o futuro
 
+- **Exportar para o CapCut** (pesquisado em out/2026, ainda não feito; o dono perguntou). O CapCut do dono é o **9.6** (`%LOCALAPPDATA%/CapCut/Apps/9.6.0.4097`). Os projetos ficam em `%LOCALAPPDATA%/CapCut/User Data/Projects/com.lveditor.draft/<pasta>/`, e o `draft_content.json` é **JSON aberto** (`"version":360000`, `"new_version":"189.0.0"`). Só o JianYing chinês 6.0+ criptografa.
+  - Caminho recomendado ("opção 1"): gerar uma pasta de projeto com o vídeo + o MOV transparente da legenda numa faixa por cima. Fica idêntico ao LegendaPRO e o resto continua editável no CapCut.
+  - "Opção 2": legenda como texto nativo do CapCut, editável. Seria só uma aproximação: não existe lá a entrada com desfoque por palavra, os halos em camadas, a mistura de diferença, a elipse desenhada nem o nosso texto atrás da pessoa.
+  - "Preset" de texto do CapCut: os modelos vêm da loja deles e não são importáveis.
+  - Risco: o formato não é oficial e muda entre versões; há relatos de 8.x/9.x recusando projetos feitos a partir de modelos antigos ("unconventional path"). Montar copiando a estrutura de um projeto real da 9.6 do dono e testar abrindo no app. Referências: capcut-cli (renezander030), pyCapCut/pyJianYingDraft, VectCutAPI.
+- Texto atrás da pessoa: escolher **uma** pessoa clicando nela (hoje o RVM recorta todas). Caminho possível: SAM 2 ou componentes conectados a partir do clique.
 - Mais presets a partir de novos reels de referência (mesmo processo: quadros → medidas → JSON).
 - `red_fallback` configurável na UI.
 - Limpeza melhor dos restos de legenda nas versões limpas das referências.

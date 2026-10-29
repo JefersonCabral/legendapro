@@ -1,0 +1,35 @@
+# Cabeçalhos do Cloudflare Pages (https://developers.cloudflare.com/pages/configuration/headers/)
+# Cuidado: se duas regras definirem o mesmo cabeçalho para um caminho, o Pages junta os valores
+# com vírgula. Por isso a Content-Security-Policy fica só nas regras das páginas (/ e /app/*), que não se
+# sobrepõem, e o Cache-Control só aparece em regras que também não se sobrepõem.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin
+
+# página de download
+/
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests
+/index.html
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests
+
+# o app: fala com o motor do PC em http://127.0.0.1 (porta 7860–7869). NÃO usar
+# upgrade-insecure-requests aqui: ele trocaria http://127.0.0.1 por https e o motor não seria encontrado.
+# 'unsafe-inline' só em estilos (a interface usa style="--cor:…" nas palavras coloridas).
+/app/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob: http://127.0.0.1:*; media-src 'self' blob: http://127.0.0.1:*; connect-src 'self' http://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+  Cache-Control: no-cache
+
+# CSS/JS/ícone da página de download não têm hash no nome: cache de 1 dia + revalidação.
+/assets/*
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/fonts/*
+  Cache-Control: public, max-age=604800
+
+# config.js tem o link do instalador: sempre revalida, para a troca valer na hora.
+/config.js
+  Cache-Control: no-cache

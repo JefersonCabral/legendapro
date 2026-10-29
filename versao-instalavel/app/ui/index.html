@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LegendaPRO</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230e0c0b'/%3E%3Ctext x='32' y='44' font-family='Arial, sans-serif' font-weight='700' font-size='34' fill='%23e3241d' text-anchor='middle'%3EL%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-sans">Legenda</span><span class="brand-serif">pro</span>
+    <span class="brand-tag">motor de legendas dinâmicas</span>
+  </div>
+  <div class="project-title" id="projectTitleWrap" hidden>
+    <label class="title-edit" title="Clique para renomear o projeto">
+      <input id="projectTitle" spellcheck="false" aria-label="Nome do projeto">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17.5V20h2.5L17 9.5 14.5 7 4 17.5zM19.7 6.8a1 1 0 0 0 0-1.4l-1.1-1.1a1 1 0 0 0-1.4 0l-1.3 1.3 2.5 2.5 1.3-1.3z"/></svg>
+    </label>
+  </div>
+  <div class="top-actions">
+    <div class="history" id="history" hidden>
+      <button class="btn-ghost" id="btnUndo" title="Desfazer (Ctrl+Z)" disabled>
+        <svg viewBox="0 0 24 24"><path d="M9 7H4V2M4.5 7.5A8 8 0 1 1 4 13"/></svg>
+      </button>
+      <button class="btn-ghost" id="btnRedo" title="Refazer (Ctrl+Shift+Z)" disabled>
+        <svg viewBox="0 0 24 24"><path d="M15 7h5V2M19.5 7.5A8 8 0 1 0 20 13"/></svg>
+      </button>
+    </div>
+    <span class="chip" id="chipGpu"><i></i>GPU</span>
+    <button class="btn-ghost btn-help" id="btnHelp" title="Atalhos e ajuda (?)">?</button>
+  </div>
+</header>
+
+<main class="studio">
+  <!-- PROJETOS ------------------------------------------------------>
+  <aside class="rail">
+    <div class="rail-head">
+      <h2 class="eyebrow">Projetos</h2>
+      <button class="btn btn-primary btn-sm" id="btnNew"><span>+</span> Novo vídeo</button>
+    </div>
+    <div class="rail-search" id="railSearch" hidden>
+      <input id="projectSearch" type="search" placeholder="Buscar projeto…" spellcheck="false" aria-label="Buscar projeto">
+    </div>
+    <div class="project-list" id="projectList"></div>
+  </aside>
+
+  <!-- PALCO --------------------------------------------------------->
+  <section class="stage" id="stage">
+    <div class="drop" id="drop">
+      <div class="drop-inner">
+        <p class="drop-kicker">comece aqui</p>
+        <h1 class="drop-title">Solte o vídeo<br><em>que vai ganhar legenda.</em></h1>
+        <p class="drop-sub">MP4, MOV, MKV ou WEBM. A transcrição começa sozinha e o motor decide os destaques e efeitos. Depois é só clicar nas palavras para ajustar.</p>
+        <button class="btn btn-primary btn-lg" id="btnPick">Escolher arquivo</button>
+        <p class="drop-label">Estilo inicial <small>(dá para trocar depois)</small></p>
+        <div class="drop-presets" id="uploadPresets"></div>
+        <details class="adv-opts">
+          <summary>Opções avançadas</summary>
+          <label>Transcrição
+            <select id="uploadModel"></select>
+          </label>
+        </details>
+      </div>
+      <input type="file" id="fileInput" accept="video/*" hidden>
+    </div>
+
+    <div class="viewer" id="viewer" hidden>
+      <div class="phone-wrap">
+        <div class="glow" aria-hidden="true"></div>
+        <div class="phone" id="phone">
+          <video id="player" playsinline preload="auto"></video>
+          <div class="live" id="live" aria-hidden="true">
+            <canvas data-l="bg"></canvas>
+            <canvas data-l="back_normal"></canvas><canvas data-l="back_screen"></canvas><canvas data-l="back_blend"></canvas>
+            <canvas data-l="person"></canvas>
+            <canvas data-l="normal"></canvas><canvas data-l="screen"></canvas><canvas data-l="blend"></canvas><canvas data-l="flash"></canvas>
+          </div>
+          <div class="hits" id="hits"></div>
+          <div class="drag-tip" id="dragTip" hidden></div>
+          <div class="phone-tip" id="phoneTip" hidden>
+            <b>Clique numa palavra</b> para corrigir, mudar a cor ou pôr efeito · <b>arraste</b> para mover a legenda
+            <button id="phoneTipX" title="Entendi">×</button>
+          </div>
+          <div class="busy" id="busy" hidden>
+            <div class="ring"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" class="ring-bg"/><circle cx="60" cy="60" r="52" class="ring-fg" id="ringFg"/></svg><span id="busyPct">0%</span></div>
+            <p class="busy-title" id="busyTitle">Transcrevendo…</p>
+            <p class="busy-sub" id="busySub"></p>
+          </div>
+          <div class="frame-loading" id="frameLoading"></div>
+        </div>
+
+        <!-- menu da palavra (clicada no vídeo ou no texto) -->
+        <div class="wordpop" id="wordPop" hidden>
+          <div class="wp-head"><span id="wpCount">1 palavra</span><button class="wp-x" id="wpClose" title="Fechar (Esc)">×</button></div>
+          <label class="wp-label" for="wpText">Texto <small>Enter aplica</small></label>
+          <input id="wpText" spellcheck="true" autocomplete="off" title="Corrija e aperte Enter">
+          <label class="wp-label">Efeitos</label>
+          <div class="wp-marks" id="wpMarks">
+            <button data-mark="destaque" title="Palavra em evidência, do jeito do estilo. Acende quando a palavra já é destaque; clique para ligar ou desligar."><b class="mk-hero">Aa</b>Destaque</button>
+            <button data-mark="red" title="Destaque vermelho"><b class="mk-red">Aa</b>Vermelho</button>
+            <button data-mark="circle" title="Elipse desenhada em volta"><b class="mk-circle">Aa</b>Elipse</button>
+            <button data-mark="underline" title="Sublinhado em traço"><b class="mk-under">Aa</b>Traço</button>
+            <button data-mark="box" title="Caixa atrás da palavra"><b class="mk-box">Aa</b>Caixa</button>
+            <button data-mark="solo" title="Palavra sozinha na tela, com pop"><b class="mk-solo">Aa</b>Solo</button>
+            <button data-mark="card" title="O trecho vira um card de citação (fundo chapado)"><b class="mk-card">“”</b>Card</button>
+            <button data-mark="break" title="Começa uma nova legenda depois desta palavra"><b class="mk-break">⏎</b>Quebrar após</button>
+            <button data-mark="behind" class="wide" title="As legendas selecionadas ficam atrás da pessoa: o vídeo é recortado só nesses trechos, e cada um tem posição e tamanho próprios"><b class="mk-behind"><svg viewBox="0 0 24 24"><path d="M3 9h11M3 13h8"/><circle cx="16" cy="8" r="3.2"/><path d="M10.5 21c.6-4 2.8-6.4 5.5-6.4s4.9 2.4 5.5 6.4"/></svg></b>Atrás da pessoa</button>
+          </div>
+          <div class="wp-behind" id="wpBehind" hidden>
+            <label class="wp-label">Este trecho atrás da pessoa</label>
+            <div class="ctl-top"><span>Tamanho do texto</span><output id="wpBehindSizeOut"></output></div>
+            <input type="range" id="wpBehindSize" min="0.5" max="3" step="0.05" aria-label="Tamanho do texto atrás da pessoa">
+            <p class="wp-hint" id="wpBehindHint">Arraste a palavra no vídeo para posicionar só este trecho.</p>
+            <button class="btn btn-sm btn-block" id="wpBehindReset" title="O sistema olha a silhueta da pessoa e põe o texto parcialmente atrás dela">Posicionar automaticamente</button>
+          </div>
+          <p class="wp-note" id="wpNote"></p>
+          <label class="wp-label">Cor <span id="wpColorName"></span></label>
+          <div class="wp-colors" id="wpColors"></div>
+          <p class="wp-hint">Shift+clique seleciona um trecho · Ctrl+clique soma palavras</p>
+        </div>
+      </div>
+
+      <div class="transport">
+        <button class="btn-round" id="btnPlay" title="Tocar / pausar (espaço)">
+          <svg viewBox="0 0 24 24" class="i-play"><path d="M8 5.5v13l11-6.5z"/></svg>
+          <svg viewBox="0 0 24 24" class="i-pause"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg>
+        </button>
+        <div class="tc"><span id="tcNow">00:00.00</span><span class="tc-sep">/</span><span id="tcDur">00:00.00</span></div>
+        <div class="pv-box">
+          <span class="preview-state" id="previewState"></span>
+          <span class="matte-state" id="matteState" hidden></span>
+        </div>
+        <div class="step-btns">
+          <button class="btn-ghost" id="btnPrev" title="Quadro anterior (←)">‹</button>
+          <button class="btn-ghost" id="btnNext" title="Próximo quadro (→)">›</button>
+        </div>
+      </div>
+
+      <div class="timeline" id="timeline">
+        <div class="tl-track" id="tlTrack"></div>
+        <div class="tl-flashes" id="tlFlashes"></div>
+        <div class="tl-head" id="tlHead"><span></span></div>
+        <input type="range" id="scrub" min="0" max="1" step="0.001" value="0" aria-label="Posição">
+      </div>
+      <div class="tl-foot">
+        <div class="scene-now" id="sceneNow"></div>
+        <div class="tl-legend" id="tlLegend" title="Cada bloco da linha do tempo é uma legenda na tela, com o texto dela."></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- INSPETOR ------------------------------------------------------>
+  <aside class="inspector" id="inspector">
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="texto" role="tab">Texto</button>
+      <button class="tab" data-tab="estilo" role="tab">Estilo</button>
+      <button class="tab" data-tab="exportar" role="tab">Exportar<i class="tab-dot" id="exportDot" hidden title="Há vídeo exportado desatualizado"></i></button>
+    </nav>
+
+    <!-- TEXTO -->
+    <section class="pane active" data-pane="texto">
+      <div class="pane-head">
+        <h2>Transcrição</h2>
+        <span class="save-state" id="saveState"></span>
+      </div>
+      <p class="hint" id="textHint">Clique numa palavra (aqui ou no vídeo) para corrigir, mudar a cor ou pôr efeito. Arraste por cima do texto para pegar várias.</p>
+      <div class="rich" id="rich" aria-label="Transcrição"></div>
+      <textarea id="text" spellcheck="false" placeholder="A transcrição aparece aqui…" hidden></textarea>
+      <div class="text-tools">
+        <button class="btn btn-sm" id="btnRawMode" title="Editar o texto inteiro de uma vez (com os códigos das marcações)">Editar texto livre</button>
+        <span class="rich-legend" id="richLegend"><i class="rl-auto"></i>destaque escolhido pelo estilo</span>
+      </div>
+      <details class="syntax" id="syntax" hidden>
+        <summary>Códigos das marcações</summary>
+        <table>
+          <tr><td><code>*palavra*</code></td><td>destaque do estilo</td></tr>
+          <tr><td><code>{-}palavra</code></td><td>nunca vira destaque</td></tr>
+          <tr><td><code>!palavra!</code></td><td>vermelho</td></tr>
+          <tr><td><code>((palavra))</code></td><td>elipse</td></tr>
+          <tr><td><code>_palavra_</code></td><td>sublinhado</td></tr>
+          <tr><td><code>[palavra]</code></td><td>caixa</td></tr>
+          <tr><td><code>~palavra</code></td><td>solo com pop</td></tr>
+          <tr><td><code>{#FFD60A}palavra</code></td><td>cor da palavra</td></tr>
+          <tr><td><code>|</code></td><td>quebra de legenda</td></tr>
+          <tr><td><code>"…"</code></td><td>card de citação</td></tr>
+        </table>
+      </details>
+      <details class="adv-opts retrans-box">
+        <summary>Transcrever de novo</summary>
+        <p class="hint">Refaz a transcrição do áudio e substitui o texto atual (as correções e efeitos se perdem).</p>
+        <div class="retrans">
+          <select id="retransModel" aria-label="Modelo de transcrição"></select>
+          <button class="btn btn-sm" id="btnRetrans">Transcrever</button>
+        </div>
+      </details>
+    </section>
+
+    <!-- ESTILO -->
+    <section class="pane" data-pane="estilo">
+      <div class="pane-head">
+        <h2>Estilo</h2>
+        <button class="btn-link" id="btnResetStyle" title="Desfaz os ajustes desta aba e volta ao estilo original (dá para desfazer)">Restaurar estilo</button>
+      </div>
+      <p class="hint">Vale para o vídeo inteiro. Para mudar só algumas palavras, clique nelas.</p>
+      <div class="presets" id="presetGrid"></div>
+      <div id="controls" class="controls"></div>
+      <button class="btn-link adv-toggle" id="btnAdv"></button>
+      <details class="save-preset">
+        <summary>Salvar como novo estilo</summary>
+        <input id="newPresetName" placeholder="Preset 12" spellcheck="false" aria-label="Nome do novo estilo">
+        <input id="newPresetDesc" placeholder="Descrição curta (opcional)" aria-label="Descrição">
+        <button class="btn btn-primary btn-block" id="btnSavePreset">Salvar estilo</button>
+      </details>
+    </section>
+
+    <!-- EXPORTAR -->
+    <section class="pane" data-pane="exportar">
+      <div class="pane-head"><h2>Exportar</h2></div>
+      <div class="formats">
+        <label class="fmt">
+          <input type="radio" name="fmt" value="mp4" checked>
+          <span class="fmt-body"><b>Vídeo legendado</b><small>MP4 com a legenda gravada no vídeo, com áudio. Pronto para postar.</small></span>
+        </label>
+        <label class="fmt">
+          <input type="radio" name="fmt" value="alpha">
+          <span class="fmt-body"><b>Só a legenda, com fundo transparente</b><small>MOV para colocar por cima do vídeo no Premiere, DaVinci ou CapCut.</small></span>
+        </label>
+      </div>
+      <div class="field-row">
+        <label>Resolução
+          <select id="expRes">
+            <option value="original">Igual ao vídeo</option>
+            <option value="1920">1080 × 1920 (Full HD)</option>
+            <option value="1280">720 × 1280 (mais leve)</option>
+          </select>
+        </label>
+        <label>Qualidade
+          <select id="expQ">
+            <option value="16">Máxima</option>
+            <option value="18" selected>Alta</option>
+            <option value="22">Leve</option>
+          </select>
+        </label>
+      </div>
+      <button class="btn btn-primary btn-block btn-lg" id="btnExport">Exportar vídeo</button>
+      <div class="export-progress" id="expProg" hidden>
+        <div class="bar"><span id="expBar"></span></div>
+        <div class="exp-meta"><span id="expMsg"></span><button class="btn-link" id="btnCancel">cancelar</button></div>
+      </div>
+      <div class="exports" id="exports"></div>
+    </section>
+  </aside>
+</main>
+
+<!-- janela de confirmação / ajuda -->
+<div class="modal" id="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <h3 id="modalTitle"></h3>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-actions">
+      <button class="btn" id="modalCancel">Cancelar</button>
+      <button class="btn btn-primary" id="modalOk">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status"><span id="toastMsg"></span><button class="toast-act" id="toastAct" hidden></button></div>
+
+<!-- só no site: o motor do PC não respondeu (não instalado, fechado ou sem permissão do navegador) -->
+<div class="gate" id="gate" hidden>
+  <div class="gate-card" role="dialog" aria-modal="true" aria-labelledby="gateTitle">
+    <span class="eyebrow">Motor do LegendaPRO</span>
+    <h2 id="gateTitle">Abra o LegendaPRO no seu computador</h2>
+    <p>O site é só a tela: quem transcreve, desenha e exporta é o motor instalado no seu PC, usando a sua placa de vídeo. Seus vídeos não saem do computador.</p>
+    <ol class="gate-steps">
+      <li><b>Já instalou?</b> Clique em <b>Abrir o motor</b>. Esta página continua sozinha quando ele estiver pronto.</li>
+      <li><b>Ainda não?</b> Baixe, instale e volte aqui.</li>
+      <li>Se o navegador perguntar se este site pode <b>acessar dispositivos da rede local</b>, clique em <b>Permitir</b>: é assim que a página fala com o motor do seu PC.</li>
+    </ol>
+    <div class="row gate-actions">
+      <a class="btn btn-primary" id="gateOpen" href="legendapro://abrir">Abrir o motor</a>
+      <a class="btn" id="gateDownload" href="#">Baixar o LegendaPRO</a>
+    </div>
+    <p class="gate-wait" id="gateWait">procurando o motor no seu PC…</p>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+# Dependências do LegendaPRO no Python embutido (CPython 3.12, Windows x64).
+# Lista FECHADA: o build.ps1 instala com --no-deps, então tudo o que o programa precisa está aqui,
+# com versão fixa. Para atualizar, resolva de novo (ver LEIA-ME.md) e cole a lista inteira.
+#
+# Por que --no-deps: o faster-whisper declara dependência do "onnxruntime" comum, mas o programa usa
+# o "onnxruntime-directml" (recorte da pessoa em qualquer placa via DirectML). Os dois instalam o
+# mesmo pacote "onnxruntime" e um sobrescreve o outro; com --no-deps só o DirectML entra.
+# NÃO entram aqui: torch e as wheels nvidia-* (as DLLs CUDA são baixadas sob demanda pelo app).
+
+# --- o programa
+numpy==2.4.4
+opencv-python-headless==5.0.0.93
+pillow==12.2.0
+faster-whisper==1.2.1
+onnxruntime-directml==1.24.4
+
+# --- faster-whisper
+ctranslate2==4.8.1
+av==18.0.0
+tokenizers==0.23.1
+huggingface_hub==1.22.0
+tqdm==4.70.1
+colorama==0.4.6
+setuptools==84.2.1
+PyYAML==6.0.3
+
+# --- huggingface_hub (download do modelo do Whisper)
+click==8.5.0
+filelock==4.2.4
+fsspec==2026.9.0
+hf-xet==1.7.1
+httpx==0.28.1
+httpcore==1.0.9
+h11==0.16.0
+anyio==4.15.1
+idna==3.20
+certifi==2026.10.23
+packaging==26.3
+typing_extensions==4.16.0
+
+# --- onnxruntime-directml
+flatbuffers==25.12.19
+protobuf==7.36.2
+sympy==1.14.0
+mpmath==1.3.0
