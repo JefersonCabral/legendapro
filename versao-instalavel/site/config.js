@@ -11,14 +11,12 @@
 // (a Release é criada sozinha pelo GitHub Actions quando sai uma tag v*).
 const RELEASES = "https://github.com/JefersonCabral/legendapro/releases/latest/download";
 const DOWNLOAD_URL = RELEASES + "/LegendaPRO-Setup.exe";
-const VERSION = "1.0.0";
+const VERSION = "1.0.1";
 const SIZE_MB = 178;
 
-/* Mac: os .dmg já vão para a mesma Release. Enquanto o Mac não for testado num Mac de verdade, estes ficam
-   vazios e o site mostra "Versão para Mac em breve". Para liberar, troque por:
-     RELEASES + "/LegendaPRO-mac-arm64.dmg"   e   RELEASES + "/LegendaPRO-mac-x86_64.dmg" */
-const DOWNLOAD_URL_MAC = "";        // Mac com chip Apple (M1…M4)
-const DOWNLOAD_URL_MAC_INTEL = "";  // Mac Intel
+/* Mac: os .dmg vão para a mesma Release. Deixar vazio volta o site para "Versão para Mac em breve". */
+const DOWNLOAD_URL_MAC = RELEASES + "/LegendaPRO-mac-arm64.dmg";         // Mac com chip Apple (M1…M4)
+const DOWNLOAD_URL_MAC_INTEL = RELEASES + "/LegendaPRO-mac-x86_64.dmg";  // Mac Intel
 
 /* Não precisa mexer daqui para baixo. */
 window.LEGENDAPRO = Object.freeze({ DOWNLOAD_URL, VERSION, SIZE_MB, DOWNLOAD_URL_MAC, DOWNLOAD_URL_MAC_INTEL });
