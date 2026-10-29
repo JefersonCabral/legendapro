@@ -45,7 +45,9 @@ def natural_key(name):
 
 
 def names():
-    return sorted((f[:-5] for f in os.listdir(PRESET_DIR) if f.endswith(".json")), key=natural_key)
+    # arquivos com ponto na frente são do programa (.fabrica.json = manifesto dos presets de fábrica)
+    return sorted((f[:-5] for f in os.listdir(PRESET_DIR) if f.endswith(".json") and not f.startswith(".")),
+                  key=natural_key)
 
 
 def load(name):
