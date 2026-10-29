@@ -1763,15 +1763,17 @@ async function lnaHint() {
 async function connectEngine() {
   if (LOCAL_UI) return api("/api/status");
   const cfg = window.LEGENDAPRO || {};
+  // os dois downloads aparecem sempre (Windows e Mac); sem link no config.js, o botão some
   $("#gateDownload").href = cfg.DOWNLOAD_URL || "/";
+  $("#gateDownloadMac").href = cfg.DOWNLOAD_URL_MAC || "/";
+  $("#gateDownloadMac").hidden = !cfg.DOWNLOAD_URL_MAC;
   // por enquanto o motor só existe para Windows: no Mac/celular, avisa em vez de oferecer o .exe
   const plat = `${navigator.userAgentData?.platform || navigator.platform || ""} ${navigator.userAgent}`;
   const mobile = /Android|iPhone|iPad|iPod/i.test(plat) || navigator.userAgentData?.mobile;
   const mac = !mobile && /Mac/i.test(plat);
   if (mac && cfg.DOWNLOAD_URL_MAC) {
-    // Mac com o motor publicado: baixa o .dmg; o Safari costuma barrar https → http://127.0.0.1
-    $("#gateDownload").href = cfg.DOWNLOAD_URL_MAC;
-    $("#gateDownload").textContent = "Baixar para Mac";
+    // Mac: o download do Mac vem primeiro; o Safari costuma barrar https → http://127.0.0.1
+    $("#gateDownloadMac").after($("#gateDownload"));
     if (/Safari/i.test(navigator.userAgent) && !/Chrome|Chromium|Edg\//i.test(navigator.userAgent))
       $("#gateWait").textContent = "no Mac, use o Chrome ou o Edge: o Safari não deixa a página falar com o motor do seu computador";
   } else if (mobile || mac) {

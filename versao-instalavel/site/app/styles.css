@@ -568,3 +568,4 @@ kbd { display: inline-block; min-width: 20px; padding: 2px 6px; border-radius: 6
 .gate-wait { margin: 14px 0 0 !important; font: 400 11.5px/1.4 var(--mono); color: var(--faint) !important; }
 .gate-wait::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 8px; border-radius: 50%; background: var(--amber, #ffb547); animation: gatepulse 1.2s ease-in-out infinite; vertical-align: 1px; }
 @keyframes gatepulse { 50% { opacity: .25; } }
+.gate-actions [hidden] { display: none; }

@@ -105,6 +105,10 @@ p { margin: 0; }
 .btn.is-soon { background: var(--panel-3); border-color: var(--line-2, #3a312b); color: var(--muted); box-shadow: none; }
 .btn.is-soon .ico { display: none; }
 .mac-alt { font-size: 13px; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+.mac-alt[hidden] { display: none; }
+.dl-group { display: flex; flex-wrap: wrap; gap: 12px; }
+.final .dl-group { justify-content: center; }
+@media (max-width: 640px) { .dl-group { flex-direction: column; width: 100%; } }
 .ico { width: 22px; height: 22px; flex: none; }
 
 .cta { margin-top: 34px; display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }

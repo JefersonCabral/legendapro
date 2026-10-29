@@ -14,9 +14,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Poppins:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/assets/styles.css?v=3">
+  <link rel="stylesheet" href="/assets/styles.css?v=4">
   <script src="/config.js" defer></script>
-  <script src="/assets/script.js?v=3" defer></script>
+  <script src="/assets/script.js?v=4" defer></script>
 </head>
 <body>
   <a class="skip" href="#conteudo">Pular para o conteúdo</a>
@@ -42,7 +42,7 @@
     <section class="hero">
       <div class="wrap hero-in">
         <div class="hero-copy">
-          <p class="eyebrow">Para Windows · transcrição automática</p>
+          <p class="eyebrow">Para Windows e Mac · transcrição automática</p>
           <h1>Legendas animadas de reels, <span class="hl">feitas no seu PC</span>.</h1>
           <p class="lead">
             O LegendaPRO transcreve qualquer vídeo e monta sozinho legendas no estilo dos reels:
@@ -50,17 +50,24 @@
             Você usa aqui no navegador, e quem processa é o motor instalado no seu PC, com a sua placa de vídeo.
           </p>
           <div class="cta">
-            <a class="btn btn-primary btn-big" data-download href="https://github.com/JefersonCabral/legendapro/releases/latest/download/LegendaPRO-Setup.exe">
-              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 19h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              <span>Baixar para Windows</span>
-            </a>
-            <a class="btn btn-big" href="/app/">Já instalei: abrir o LegendaPRO</a>
+            <div class="dl-group">
+              <a class="btn btn-primary btn-big" data-download="win" href="https://github.com/JefersonCabral/legendapro/releases/latest/download/LegendaPRO-Setup.exe">
+                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 19h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span>Baixar para Windows</span>
+              </a>
+              <a class="btn btn-big" data-download="mac" href="https://github.com/JefersonCabral/legendapro/releases/latest/download/LegendaPRO-mac-arm64.dmg">
+                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 19h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span>Baixar para Mac</span>
+              </a>
+            </div>
+            <a class="mac-alt" data-download="mac-intel" href="https://github.com/JefersonCabral/legendapro/releases/latest/download/LegendaPRO-mac-x86_64.dmg">Mac com processador Intel? Baixe esta versão</a>
+            <a class="btn btn-big btn-open" href="/app/">Já instalei: abrir o LegendaPRO</a>
             <p class="cta-meta">
               <span class="tag" data-version>v1.0.2</span>
               <span class="dot" aria-hidden="true"></span>
-              <span class="tag" data-size>178 MB</span>
-              <span class="dot" aria-hidden="true"></span>
               <span class="tag">Windows 10/11 64-bit</span>
+              <span class="dot" aria-hidden="true"></span>
+              <span class="tag">macOS 14+ (chip Apple ou Intel)</span>
             </p>
           </div>
         </div>
@@ -245,16 +252,23 @@
     <section class="section final" aria-labelledby="t-final">
       <div class="wrap final-in">
         <h2 id="t-final">Pronto para legendar?</h2>
-        <a class="btn btn-primary btn-big" data-download href="https://github.com/JefersonCabral/legendapro/releases/latest/download/LegendaPRO-Setup.exe">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 19h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>Baixar o LegendaPRO</span>
-        </a>
+        <div class="dl-group">
+          <a class="btn btn-primary btn-big" data-download="win" href="https://github.com/JefersonCabral/legendapro/releases/latest/download/LegendaPRO-Setup.exe">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 19h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Baixar para Windows</span>
+          </a>
+          <a class="btn btn-big" data-download="mac" href="https://github.com/JefersonCabral/legendapro/releases/latest/download/LegendaPRO-mac-arm64.dmg">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 19h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Baixar para Mac</span>
+          </a>
+        </div>
+        <a class="mac-alt" data-download="mac-intel" href="https://github.com/JefersonCabral/legendapro/releases/latest/download/LegendaPRO-mac-x86_64.dmg">Mac com processador Intel? Baixe esta versão</a>
         <p class="cta-meta">
           <span class="tag" data-version>v1.0.2</span>
           <span class="dot" aria-hidden="true"></span>
-          <span class="tag" data-size>178 MB</span>
-          <span class="dot" aria-hidden="true"></span>
           <span class="tag">Windows 10/11 64-bit</span>
+          <span class="dot" aria-hidden="true"></span>
+          <span class="tag">macOS 14+ (chip Apple ou Intel)</span>
         </p>
       </div>
     </section>

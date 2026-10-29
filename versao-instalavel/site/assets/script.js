@@ -13,44 +13,43 @@
     return Math.round(mb).toLocaleString("pt-BR") + " MB";
   }
 
-  // Sistema de quem visita: por enquanto o motor só existe para Windows
+  // Os dois downloads (Windows e Mac) aparecem sempre; o do sistema de quem visita fica em destaque
   var plat = ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "") + " " + navigator.userAgent;
   var mobile = /Android|iPhone|iPad|iPod/i.test(plat) || (navigator.userAgentData && navigator.userAgentData.mobile);
   var mac = !mobile && /Mac/i.test(plat);
+  var links = {
+    win: url,
+    mac: typeof cfg.DOWNLOAD_URL_MAC === "string" ? cfg.DOWNLOAD_URL_MAC : "",
+    "mac-intel": typeof cfg.DOWNLOAD_URL_MAC_INTEL === "string" ? cfg.DOWNLOAD_URL_MAC_INTEL : ""
+  };
 
-  var macUrl = typeof cfg.DOWNLOAD_URL_MAC === "string" ? cfg.DOWNLOAD_URL_MAC : "";
-  var macIntelUrl = typeof cfg.DOWNLOAD_URL_MAC_INTEL === "string" ? cfg.DOWNLOAD_URL_MAC_INTEL : "";
-
-  // Links de download
   document.querySelectorAll("[data-download]").forEach(function (a) {
-    if (mac && macUrl) {
-      // o navegador não diz com certeza se o Mac é chip Apple ou Intel: o botão é do chip Apple (a maioria)
-      // e o link do Intel aparece logo abaixo
-      a.setAttribute("href", macUrl);
-      a.setAttribute("download", macUrl.split("/").pop().split("?")[0]);
-      var lb = a.querySelector("span") || a;
-      lb.textContent = "Baixar para Mac (chip Apple)";
-      if (macIntelUrl && !a.classList.contains("btn-small")) {
-        var alt = document.createElement("a");
-        alt.className = "mac-alt";
-        alt.href = macIntelUrl;
-        alt.textContent = "Mac com processador Intel? Baixe esta versão";
-        a.insertAdjacentElement("afterend", alt);
-      }
-      return;
-    }
-    if (mac || mobile) {
+    var kind = a.getAttribute("data-download") || "win";
+    var href = links[kind];
+    if (!href) {                      // link vazio no config.js: esse sistema ainda não tem versão
+      if (kind === "mac-intel") { a.hidden = true; return; }
       a.setAttribute("href", "#perguntas");
       a.removeAttribute("download");
       a.classList.add("is-soon");
-      var label = a.querySelector("span") || a;
-      label.textContent = mac ? "Versão para Mac em breve" : "Disponível para computador Windows";
+      (a.querySelector("span") || a).textContent = kind === "mac" ? "Mac: em breve" : "Windows: em breve";
       return;
     }
-    if (url) a.setAttribute("href", url);
-    var file = url.split("/").pop().split("?")[0];
+    a.setAttribute("href", href);
+    var file = href.split("/").pop().split("?")[0];
     if (file) a.setAttribute("download", file);
+    if (kind === "win" && fmtSize(size)) a.title = "Instalador para Windows · " + fmtSize(size);
   });
+
+  // destaque no botão do sistema de quem está acessando (no Mac, o de Mac vira o principal e vem primeiro)
+  if (mac && links.mac) {
+    document.querySelectorAll(".dl-group").forEach(function (g) {
+      var w = g.querySelector('[data-download="win"]'), m = g.querySelector('[data-download="mac"]');
+      if (!w || !m) return;
+      w.classList.remove("btn-primary");
+      m.classList.add("btn-primary");
+      g.insertBefore(m, w);
+    });
+  }
 
   // Versão e tamanho
   document.querySelectorAll("[data-version]").forEach(function (el) {
