@@ -5,6 +5,7 @@ opencv-python-headless==5.0.0.93
 pillow==12.2.0
 faster-whisper==1.2.1          # reserva (processador) e o carregador de áudio
 ctranslate2==4.8.1
+av==18.0.0                     # o faster-whisper 1.2.1 usa uma opção que a av 19 tirou (metadata_errors)
 onnxruntime==1.24.4            # traz o CoreML
 mlx-whisper==0.4.3             # transcrição no chip Apple (puxa o mlx)
 rumps==0.4.0                   # ícone na barra de menu

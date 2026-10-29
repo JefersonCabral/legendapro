@@ -60,6 +60,14 @@ jobs:
           "$RES/python/bin/python3" versao-instalavel/build/ci_smoke.py \
             --python "$RES/python/bin/python3" --app "$RES/app" --model tiny
 
+      - name: Teste sem aceleração (caminho de reserva no processador)
+        env:
+          LEGENDAPRO_FORCE_CPU: "1"
+        run: |
+          RES=versao-instalavel/dist-mac/LegendaPRO.app/Contents/Resources
+          "$RES/python/bin/python3" versao-instalavel/build/ci_smoke.py \
+            --python "$RES/python/bin/python3" --app "$RES/app" --model tiny --port 7890
+
       - uses: actions/upload-artifact@v4
         with:
           name: LegendaPRO-mac-${{ matrix.arch }}

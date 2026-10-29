@@ -91,6 +91,9 @@ def providers():
 
 def provider_label():
     p = (providers() or ["?"])[0]
+    if p == "CoreMLExecutionProvider":
+        import platform
+        return "chip Apple (CoreML)" if platform.machine() == "arm64" else "CoreML"
     return {"DmlExecutionProvider": "placa de vídeo (DirectML)", "CoreMLExecutionProvider": "chip Apple (CoreML)",
             "CUDAExecutionProvider": "GPU NVIDIA (CUDA)", "CPUExecutionProvider": "processador"}.get(p, "indisponível")
 
