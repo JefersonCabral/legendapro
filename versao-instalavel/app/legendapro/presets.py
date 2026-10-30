@@ -21,6 +21,7 @@ TAGLINES = {
     "preset-7": "Frase empilhada", "preset-8": "Frase empilhada, fundo claro",
     "preset-9": "Rosa em modo diferença", "preset-10": "Caixa que se preenche",
     "preset-11": "Destaque que desliza",
+    "preset-pop": "Palavra por palavra com pop",
 }
 
 

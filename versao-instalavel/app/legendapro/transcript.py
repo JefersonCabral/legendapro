@@ -14,6 +14,7 @@ Marcações aceitas no texto (opcionais, o automático decide o resto):
   {card} ... {/card}  idem, explícito
   {atras} ... {/atras}  texto atrás da pessoa (recorte do vídeo nesse trecho), posição automática
   {atras:dx,dy,escala}  idem, com posição própria (fração da largura/altura) e tamanho do trecho
+  {estilo:id}   daqui em diante a legenda usa outro estilo (preset + ajustes em meta.sections[id])
 """
 import json
 import re
@@ -59,9 +60,16 @@ _MARKS = [
 
 _COLOR = re.compile(r"^\{(#[0-9a-fA-F]{6})\}(.+)$")
 _NOEMPH = re.compile(r"^\{-\}(.+)$")
-_TAG = r"\{/?card\}|\{atras(?::[^}\s]*)?\}|\{/atras\}"
+_TAG = r"\{/?card\}|\{atras(?::[^}\s]*)?\}|\{/atras\}|\{estilo:[A-Za-z0-9_-]+\}"
 _TOKEN = re.compile(_TAG + r"|[\"“”]|(?:(?!" + _TAG + r")[^\s\"“”])+")
 _BEHIND = re.compile(r"\{atras(?::([^}\s]*))?\}")
+_STYLE = re.compile(r"\{estilo:([A-Za-z0-9_-]+)\}")
+
+
+def style_marks(text):
+    """Divisões de estilo do texto ({estilo:id}), em ordem: [{id, span}]. O bloco antes da primeira
+    divisão usa o estilo do projeto; cada divisão começa um bloco com o estilo meta.sections[id]."""
+    return [{"id": m.group(1), "span": m.span()} for m in _STYLE.finditer(text)]
 
 
 def behind_params(arg):
@@ -118,6 +126,10 @@ def parse_markup(text, spans=False):
                     dx, dy, sc = behind_params(mb.group(1))
                     behind = {"behind", f"behind:{ngroups}:{dx:g}:{dy:g}:{sc:g}"}
                 ngroups += 1
+            continue
+        if _STYLE.fullmatch(raw):   # troca de estilo: a legenda quebra ali (o servidor separa os blocos)
+            if out:
+                out[-1][1].add("break")
             continue
         if raw in "\"“”":
             quote_open = not quote_open; continue

@@ -1,7 +1,7 @@
 """LegendaPRO: motor de legendas dinâmicas."""
 
-VERSION = "1.1.1"
-API = 1      # sobe quando a interface do site e o motor deixam de ser compatíveis
+VERSION = "1.2.0"
+API = 2      # sobe quando a interface do site precisa de algo novo do motor (2: vários estilos, {estilo:id})
 
 # Sites que podem usar este motor pelo navegador (a interface hospedada no Cloudflare Pages).
 # Os vídeos nunca vão para o site: o navegador manda direto para o motor, em 127.0.0.1.

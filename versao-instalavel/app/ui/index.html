@@ -113,6 +113,11 @@
             <button data-mark="card" title="O trecho vira um card de citação (fundo chapado)"><b class="mk-card">“”</b>Card</button>
             <button data-mark="break" title="Começa uma nova legenda depois desta palavra"><b class="mk-break">⏎</b>Quebrar após</button>
             <button data-mark="behind" class="wide" title="As legendas selecionadas ficam atrás da pessoa: o vídeo é recortado só nesses trechos, e cada um tem posição e tamanho próprios"><b class="mk-behind"><svg viewBox="0 0 24 24"><path d="M3 9h11M3 13h8"/><circle cx="16" cy="8" r="3.2"/><path d="M10.5 21c.6-4 2.8-6.4 5.5-6.4s4.9 2.4 5.5 6.4"/></svg></b>Atrás da pessoa</button>
+            <button data-mark="section" class="wide" title="Divide o vídeo antes desta palavra: daqui em diante a legenda pode ter outro estilo, com ajustes próprios"><b class="mk-sec">◧</b><span>Novo estilo daqui em diante</span></button>
+          </div>
+          <div class="wp-fmt">
+            <button class="btn btn-sm" id="wpCopyFmt" title="Guarda os efeitos e a cor desta palavra (Alt+C)">Copiar formatação</button>
+            <button class="btn btn-sm" id="wpPasteFmt" title="Aplica a formatação copiada nas palavras selecionadas (Alt+V)" disabled>Colar formatação</button>
           </div>
           <div class="wp-behind" id="wpBehind" hidden>
             <label class="wp-label">Este trecho atrás da pessoa</label>
@@ -207,6 +212,7 @@
           <tr><td><code>{#FFD60A}palavra</code></td><td>cor da palavra</td></tr>
           <tr><td><code>|</code></td><td>quebra de legenda</td></tr>
           <tr><td><code>"…"</code></td><td>card de citação</td></tr>
+          <tr><td><code>{estilo:id}</code></td><td>daqui em diante, outro estilo (bloco)</td></tr>
         </table>
       </details>
       <details class="adv-opts retrans-box">
@@ -225,7 +231,8 @@
         <h2>Estilo</h2>
         <button class="btn-link" id="btnResetStyle" title="Desfaz os ajustes desta aba e volta ao estilo original (dá para desfazer)">Restaurar estilo</button>
       </div>
-      <p class="hint">Vale para o vídeo inteiro. Para mudar só algumas palavras, clique nelas.</p>
+      <p class="hint" id="styleHint">Vale para o vídeo inteiro. Para mudar só algumas palavras, clique nelas.</p>
+      <div class="secbar" id="secBar"></div>
       <div class="presets" id="presetGrid"></div>
       <div id="controls" class="controls"></div>
       <button class="btn-link adv-toggle" id="btnAdv"></button>

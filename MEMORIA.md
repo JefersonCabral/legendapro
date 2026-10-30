@@ -278,6 +278,27 @@ Pedido do dono: deixar a ferramenta "online", com o processamento no PC de quem 
 - **Destaques (v1.1.0):**
   - **Dois destaques na mesma oração:** antes, marcar uma palavra derrubava o destaque automático da oração. Agora `Planner.plan` planeja sem as marcações e re-marca os destaques automáticos que se perderiam.
   - **Cor:** o brilho e os raios seguem a cor escolhida na palavra (`user_color`).
+- **Vários estilos no mesmo vídeo (30/out/2026, só na cópia online, v1.2.0):**
+  - **Marcação:** `{estilo:id}` no texto começa um bloco; `meta.sections[id] = {preset, overrides}`. O 1º bloco usa `meta.preset/overrides`. Marcação sem cadastro usa o estilo do projeto.
+  - **Motor:** `project_plan` planeja cada bloco sozinho com o próprio estilo (`plan["parts"]`: style, t0, scenes, flashes; `scenes[i].sec`, `words[i].sec`, `plan["sections"]`). `render.MultiRenderer` (via `make_renderer`) entrega cada instante ao Renderer do bloco: vale de `t0` (1ª cena dele) até o próximo, com **troca seca**. `live_info` assina cada quadro com o estilo do bloco dele; `/plan` devolve `live.parts` (`f0`, `blend`, `bg`) e a prévia troca a mistura e o gradiente por bloco (`liveLook`, `live_bg.png?p=`). `place_behind` mede cada bloco com o próprio estilo.
+  - **PUT `/api/projects/<id>`:** `section: id` faz `preset`/`overrides` valerem para aquele bloco; `sections` troca todos (desfazer).
+  - **Interface:** "Novo estilo daqui em diante" no menu da palavra (o bloco nasce com o estilo de onde saiu e a aba Estilo abre nele; na palavra que já começa um bloco o botão vira "Tirar divisão"). Na aba Estilo, os cartões "Bloco N" escolhem o bloco editado (`S.sec`); clicar ou arrastar uma palavra seleciona o bloco dela. `S.base/S.overrides` são sempre os do bloco editado (`storeEd`/`loadEd`/`selectSec`/`edBody`). No texto visual, as divisões aparecem como etiquetas "Bloco N · Preset X" (× tira); na linha do tempo, uma marca âmbar numerada.
+  - **API do motor = 2.** A UI esconde o recurso com motor antigo (`canSections`), porque ele leria `{estilo:id}` como palavra. `ENGINE_API` (mínimo) continua 1.
+  - **Testes:** paridade sem divisões contra a versão anterior (1212 quadros, camadas e cliques idênticos nos 11 presets); 3 blocos em 11 combinações (27/27 palavras clicáveis, nenhuma no bloco errado, cada bloco igual ao estilo dele sozinho); fluxo na UI pelo Chrome headless; exportação.
+- **Copiar/colar formatação (30/out/2026, cópia online, v1.2.0):** botões no menu da palavra e Alt+C / Alt+V. Copia efeitos (destaque, sem destaque, vermelho, elipse, traço, caixa, solo) e cor; o destaque automático do estilo vira destaque marcado. Colar substitui os efeitos das palavras selecionadas.
+- **Preset POP (`presets/preset-pop.json`, v1.2.0):** motor frase, Poppins Bold branca com sombra, as palavras aparecem uma a uma no tempo da fala (`reveal: "word"`) com pop (`anim.type = "pop"`: `scale_from`, `overshoot`, `duration`; `Renderer.pop_scale`, cresce a partir do centro da palavra). Até 3 palavras por legenda; o controle novo "Palavras por legenda" (`rules.chunk_max_words`, 1–6, todos os presets do motor frase) também sobe `chunk_max_chars` quando precisa. Com 1 palavra por legenda o `merge_short` não junta legendas curtas (pedido explícito). Destaque marcado = amarelo #FFD60A 1,3×.
+  - **Nome do arquivo:** `preset-pop`, não `preset-12`: um preset de fábrica com o nome de um "Preset 12" já salvo pela pessoa não seria instalado (`sync_presets` não pisa no dela). Ele aparece por último na lista.
+- **Revisão independente (30/out/2026), corrigido:**
+  - o bloco editado só segue a palavra quando a seleção muda (`S.secSel`), e escolher bloco pelo cartão limpa a seleção;
+  - os ajustes são guardados por bloco na hora da edição (`ovPending`);
+  - Alt+C/V é ignorado em campo de texto (no Mac, Option+C digita "ç");
+  - o bloco seguinte começa no mínimo 0,2 s depois da última legenda do anterior;
+  - desfazer não recria bloco apagado;
+  - divisão removida pelo índice (id repetido);
+  - ids só ASCII;
+  - validação do PUT `sections`.
+  - Ficou de fora: um trecho `{atras}` cortado por uma divisão fica com uma posição por metade, e a interface mostra/arrasta só a da 1ª.
+- Projeto de teste "TESTE ESTILOS" `a0b1c2d3e4f5` (cópia do "PARTE 1"; pode ser apagado). Ao copiar projeto, trocar também o `id` dentro do `meta.json`, senão a lista mostra dois projetos com o mesmo id.
 - **PC sem placa:** `LEGENDAPRO_FORCE_CPU=1` simula. Testado com vídeo real: transcrição, recorte e x264 corretos.
 
 ## Vídeos já processados

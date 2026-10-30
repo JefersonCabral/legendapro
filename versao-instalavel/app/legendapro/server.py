@@ -2,6 +2,7 @@
 
     python -m legendapro.server            -> http://127.0.0.1:7860
 """
+import bisect
 import copy
 import hashlib
 import json
@@ -28,7 +29,7 @@ from . import matte, presets, transcript, updater
 from . import gpu
 from .gpu import cuda_available
 from .planner import Planner
-from .render import ROOT, FONT_DIR, Renderer, probe, render_video, Cancelled
+from .render import ROOT, FONT_DIR, Renderer, MultiRenderer, make_renderer, probe, render_video, Cancelled
 
 from .paths import UI_DIR, PROJ_DIR
 PRESET_DIR = presets.PRESET_DIR
@@ -104,6 +105,8 @@ def write_meta(pid, meta):
 def project_summary(pid):
     m = read_meta(pid)
     m["preset"] = presets.resolve_existing(m.get("preset"))
+    for sec in (m.get("sections") or {}).values():   # estilos dos blocos ({estilo:id}); apagado volta ao padrão
+        sec["preset"] = presets.resolve_existing(sec.get("preset"))
     d = pdir(pid)
     m["has_words"] = os.path.exists(os.path.join(d, "words.json"))
     m["exports"] = sorted(f for f in os.listdir(d) if (f.startswith("legendado") or f.startswith("legenda-alpha"))
@@ -130,29 +133,58 @@ def project_style(pid):
     return deep_merge(base, meta.get("overrides", {}))
 
 
+def section_style(meta, sid, main):
+    """Estilo de um bloco do texto ({estilo:id}): preset + ajustes guardados em meta.sections[id].
+    Bloco sem cadastro (marcação colada de outro projeto, por exemplo) usa o estilo do projeto."""
+    sec = (meta.get("sections") or {}).get(sid) if sid else None
+    if not sec:
+        return main
+    return deep_merge(load_preset(presets.resolve_existing(sec.get("preset") or meta.get("preset"))), sec.get("overrides", {}))
+
+
+def section_list(text, meta, spans):
+    """Blocos de estilo, em ordem: o 1º (antes de qualquer divisão) usa o estilo do projeto (id "");
+    cada {estilo:id} começa outro. Devolve (blocos, bloco de cada palavra)."""
+    marks = transcript.style_marks(text)
+    secs = [{"id": "", "mark": None}] + [{"id": m["id"], "mark": m["span"]} for m in marks]
+    starts = [m["span"][0] for m in marks]
+    blk = [bisect.bisect_right(starts, sp[0]) if sp else 0 for sp in spans]
+    for k, sc in enumerate(secs):
+        sec = (meta.get("sections") or {}).get(sc["id"]) or {}
+        sc["preset"] = presets.resolve_existing((sec.get("preset") if sc["id"] else None) or meta.get("preset"))
+        sc["n"] = k + 1
+    return secs, blk
+
+
 _plan_cache = {}
 
 
-def place_behind(plan, style, meta, d):
+def place_behind(plan, meta, d):
     """Trechos {atras} automáticos: posição e tamanho pela silhueta da pessoa (matte.place). Sem recorte
-    ainda, usa um palpite (1/3 da altura, 1,4×) e refaz quando o recorte fica pronto (matte_v na chave)."""
+    ainda, usa um palpite (1/3 da altura, 1,4×) e refaz quando o recorte fica pronto (matte_v na chave).
+    Cada bloco de estilo é medido com o próprio estilo."""
     autos = {sc["behind"]["g"] for sc in plan["scenes"] if (sc.get("behind") or {}).get("auto")}
     if not autos:
         return
-    res = matte.place(plan, style, meta["width"], meta["height"],
-                      lambda t, w, h: matte.load(d, t, meta["fps"], w, h))
-    lay = style["layout"]
-    guess = {"dx": 0.0, "dy": round(0.32 - lay.get("anchor_y", 0.6) - lay.get("offset_y", 0.0), 3), "s": 1.4}
     first = {}
-    for i, sc in enumerate(plan["scenes"]):
-        b = sc.get("behind")
-        if b and b.get("auto"):
-            r = res.get(i, guess)
-            b.update(r, placed=i in res)
-            first.setdefault(b["g"], b)
-            for l in sc["lines"]:
-                for t in l["tokens"]:
-                    t["size"] = round(t["size"] * r["s"], 5)
+    for part in plan["parts"]:
+        style = part["style"]
+        sub = {**plan, "scenes": part["scenes"], "flashes": part["flashes"]}
+        if not any((sc.get("behind") or {}).get("auto") for sc in sub["scenes"]):
+            continue
+        res = matte.place(sub, style, meta["width"], meta["height"],
+                          lambda t, w, h: matte.load(d, t, meta["fps"], w, h))
+        lay = style["layout"]
+        guess = {"dx": 0.0, "dy": round(0.32 - lay.get("anchor_y", 0.6) - lay.get("offset_y", 0.0), 3), "s": 1.4}
+        for i, sc in enumerate(sub["scenes"]):
+            b = sc.get("behind")
+            if b and b.get("auto"):
+                r = res.get(i, guess)
+                b.update(r, placed=i in res)
+                first.setdefault(b["g"], b)
+                for l in sc["lines"]:
+                    for t in l["tokens"]:
+                        t["size"] = round(t["size"] * r["s"], 5)
     # para a interface: o trecho mostra a posição da 1ª legenda dele (arrastar parte dela)
     for g in plan.get("groups", []):
         if g.get("auto") and g["g"] in first:
@@ -185,36 +217,60 @@ def project_plan(pid):
     meta = read_meta(pid)
     # o recorte entra na chave: a posição automática do texto atrás depende dele
     cuts = norm_cuts(meta.get("cuts"), meta.get("duration", 0))
-    key = hashlib.sha1((text + json.dumps(style, sort_keys=True) + str(os.path.getmtime(os.path.join(d, "words.json")))
+    # estilo de cada bloco do texto ({estilo:id}); só os que aparecem no texto entram na chave
+    sids = [""] + [m["id"] for m in transcript.style_marks(text)]
+    styles = {sid: section_style(meta, sid, style) for sid in dict.fromkeys(sids)}
+    key = hashlib.sha1((text + json.dumps(styles, sort_keys=True) + str(os.path.getmtime(os.path.join(d, "words.json")))
                         + f"|m{meta.get('matte_v', 0)}|c{json.dumps(cuts)}").encode()).hexdigest()
     if key in _plan_cache:
         return key, style, _plan_cache[key]
     words = transcript.align_text(text, raw) if text.strip() else raw
+    # onde cada palavra está no text.txt (a interface edita o texto a partir do clique no preview)
+    spans = transcript.parse_markup(text, spans=True)[1] if text.strip() else [None] * len(words)
+    secs, blk = section_list(text, meta, spans)
     # palavras dentro de trechos cortados saem da legenda; os tokens continuam apontando (wi) para a posição
     # da palavra no texto inteiro, para o clique no vídeo achar a palavra certa
     keep = [i for i, w in enumerate(words) if not any(a <= (w.start + w.end) / 2 < b for a, b in cuts)]
-    kept = [words[i] for i in keep]
-    plan = Planner(style).plan(kept) if kept else {"preset": style["name"], "scenes": [], "flashes": []}
-    if len(keep) != len(words):
-        for sc in plan["scenes"]:
+    # cada bloco de estilo é planejado sozinho, com o próprio estilo (palavras seguidas do mesmo bloco);
+    # na exportação e na prévia cada bloco vale do começo dele até o começo do seguinte
+    runs = []
+    for k in keep:
+        if runs and runs[-1][0] == blk[k]:
+            runs[-1][1].append(k)
+        else:
+            runs.append((blk[k], [k]))
+    parts, scenes, flashes = [], [], []
+    for b, idx in runs:
+        st = styles[secs[b]["id"]]
+        sub = Planner(st).plan([words[i] for i in idx])
+        for sc in sub["scenes"]:
+            sc["sec"] = b
             for l in sc["lines"]:
                 for t in l["tokens"]:
-                    if 0 <= t.get("wi", -1) < len(keep):
-                        t["wi"] = keep[t["wi"]]
+                    if 0 <= t.get("wi", -1) < len(idx):
+                        t["wi"] = idx[t["wi"]]
+        if not sub["scenes"]:
+            continue
+        t0 = min(sc["t_in"] for sc in sub["scenes"])
+        if parts:
+            t0 = max(t0, parts[-1]["t0"], max(s["t_in"] for s in parts[-1]["scenes"]) + 0.2)
+        parts.append({"sec": b, "style": st, "t0": t0 if parts else -1e9, "scenes": sub["scenes"], "flashes": sub["flashes"]})
+        scenes += sub["scenes"]
+        flashes += sub["flashes"]
+    plan = {"preset": style["name"], "scenes": scenes, "flashes": sorted(flashes), "parts": parts}
     keepset = set(keep)
-    # onde cada palavra está no text.txt (a interface edita o texto a partir do clique no preview)
-    spans = transcript.parse_markup(text, spans=True)[1] if text.strip() else [None] * len(words)
     # palavras que viraram o destaque do estilo (herói / serifada de ênfase), para o botão "Destaque"
     hero = {t["wi"] for sc in plan["scenes"] for l in sc["lines"] for t in l["tokens"]
             if t.get("anim") == "hero" or (t["role"] == "serif" and sc["mode"] == "stack")}
     plan["words"] = [{"start": round(w.start, 3), "end": round(w.end, 3), "span": sp, "emph": i in hero,
                       # trecho {atras} da palavra (índice em plan["groups"]) ou None
                       "bg": next((int(f.split(":")[1]) for f in w.flags if f.startswith("behind:")), None),
-                      "cut": i not in keepset}
+                      "cut": i not in keepset, "sec": blk[i]}
                      for i, (w, sp) in enumerate(zip(words, spans))]
     plan["cuts"] = cuts
     plan["groups"] = transcript.behind_groups(text)
-    place_behind(plan, style, meta, d)
+    plan["sections"] = secs
+    place_behind(plan, meta, d)
     _plan_cache.clear()
     _plan_cache[key] = plan
     return key, style, plan
@@ -239,6 +295,21 @@ def live_size(meta):
     return w, int(round(meta["height"] * w / meta["width"])) // 2 * 2
 
 
+def plan_parts(style, plan):
+    """Blocos de estilo do plano; plano sem divisões = um bloco só, com o estilo do projeto."""
+    return plan.get("parts") or [{"sec": 0, "style": style, "t0": -1e9, "scenes": plan["scenes"],
+                                  "flashes": plan.get("flashes", [])}]
+
+
+def part_at(parts, t):
+    """Índice do bloco de estilo que vale no instante t (mesma regra de MultiRenderer.part_index)."""
+    k = 0
+    for i, p in enumerate(parts):
+        if t >= p["t0"]:
+            k = i
+    return k
+
+
 def live_info(key, style, plan, duration, mv=0):
     """Assinatura de cada quadro: estilo + cenas e clarões ativos nele. "0" = quadro vazio.
     mv = versão do recorte da pessoa: quando ele fica pronto, os quadros com texto atrás mudam."""
@@ -246,28 +317,35 @@ def live_info(key, style, plan, duration, mv=0):
         if (key, mv) in _live_info:
             return _live_info[(key, mv)]
     n = int(math.ceil(duration * LIVE_FPS))
+    # vários estilos no vídeo: cada quadro mostra só o bloco que vale nele (mesma conta do MultiRenderer)
+    parts = plan_parts(style, plan)
+    pk = [part_at(parts, i / LIVE_FPS) for i in range(n)]
     act = [[] for _ in range(n)]
-    for sc in plan["scenes"]:
-        h = hashlib.sha1(json.dumps(sc, sort_keys=True, default=str).encode()).hexdigest()[:12]
-        if sc.get("behind"):
-            h += f"m{mv}"
-        for i in range(max(0, math.ceil((sc["t_in"] - 1e-6) * LIVE_FPS)), min(n, math.floor((sc["t_out"] + 1.0) * LIVE_FPS) + 1)):
-            act[i].append(h)
-    D = style["effects"].get("flash", {}).get("duration", 0.4)
-    for tf in plan.get("flashes", []):
-        t0 = tf - D * 0.35
-        for i in range(max(0, math.ceil(t0 * LIVE_FPS)), min(n, math.floor((t0 + D) * LIVE_FPS) + 1)):
-            act[i].append(f"flash{tf:.3f}")
-    sty = json.dumps(style, sort_keys=True, default=str)
+    for k, p in enumerate(parts):
+        for sc in p["scenes"]:
+            h = hashlib.sha1(json.dumps(sc, sort_keys=True, default=str).encode()).hexdigest()[:12]
+            if sc.get("behind"):
+                h += f"m{mv}"
+            for i in range(max(0, math.ceil((sc["t_in"] - 1e-6) * LIVE_FPS)), min(n, math.floor((sc["t_out"] + 1.0) * LIVE_FPS) + 1)):
+                if pk[i] == k:
+                    act[i].append(h)
+        D = p["style"]["effects"].get("flash", {}).get("duration", 0.4)
+        for tf in p.get("flashes", []):
+            t0 = tf - D * 0.35
+            for i in range(max(0, math.ceil(t0 * LIVE_FPS)), min(n, math.floor((t0 + D) * LIVE_FPS) + 1)):
+                if pk[i] == k:
+                    act[i].append(f"flash{tf:.3f}")
+    stys = [json.dumps(p["style"], sort_keys=True, default=str) for p in parts]
     sig, segs = [], []
     for i in range(n):
-        s = hashlib.sha1((sty + "|".join(act[i])).encode()).hexdigest()[:12] if act[i] else "0"
+        s = hashlib.sha1((stys[pk[i]] + "|".join(act[i])).encode()).hexdigest()[:12] if act[i] else "0"
         sig.append(s)
         if segs and segs[-1][2] == s:
             segs[-1][1] = i
         else:
             segs.append([i, i, s])
-    info = {"sig": sig, "segs": segs}
+    # 1º quadro de cada bloco (a interface troca o gradiente e o modo de mistura ali)
+    info = {"sig": sig, "segs": segs, "f0": [pk.index(k) if k in pk else n for k in range(len(parts))]}
     with _cache_lock:
         while len(_live_info) > 8:
             _live_info.pop(next(iter(_live_info)))
@@ -296,7 +374,7 @@ def live_renderer(pid, key, style, plan):
         if R is None:
             meta = read_meta(pid)
             w, h = live_size(meta)
-            R = Renderer(style, plan, w, h, alpha=True)
+            R = make_renderer(style, plan, w, h, alpha=True)
             src = os.path.join(pdir(pid), meta["file"])
             R.guard_bg = lambda t: video_frame(pid, src, t, w, h)
             R.matte = lambda t, d=pdir(pid), fps=meta["fps"]: matte.load(d, t, fps, w, h)
@@ -1038,12 +1116,21 @@ class Handler(BaseHTTPRequestHandler):
             if "text" in b:
                 with open(os.path.join(pdir(pid), "text.txt"), "w", encoding="utf-8") as f:
                     f.write(b["text"])
+            if "sections" in b:   # todos os blocos de uma vez (desfazer/refazer)
+                meta["sections"] = {k: {"preset": presets.resolve(v.get("preset")), "overrides": v.get("overrides") or {}}
+                                    for k, v in (b["sections"] or {}).items()
+                                    if isinstance(v, dict) and re.fullmatch(r"[A-Za-z0-9_-]+", k)}
+            sid = b.get("section") or ""
+            if sid and not re.fullmatch(r"[A-Za-z0-9_-]+", sid):
+                return self.send_json({"error": "bloco inválido"}, 400)
+            # bloco de estilo ({estilo:id}): preset e ajustes próprios; sem bloco = estilo do projeto
+            tgt = meta.setdefault("sections", {}).setdefault(sid, {"preset": meta.get("preset"), "overrides": {}}) if sid else meta
             if "preset" in b:
-                meta["preset"] = presets.resolve(b["preset"])
+                tgt["preset"] = presets.resolve(b["preset"])
                 if b.get("reset_overrides", True):
-                    meta["overrides"] = {}
+                    tgt["overrides"] = {}
             if "overrides" in b:
-                meta["overrides"] = b["overrides"]
+                tgt["overrides"] = b["overrides"]
             if "name" in b:
                 meta["name"] = b["name"][:80]
             if "cuts" in b:
@@ -1052,14 +1139,17 @@ class Handler(BaseHTTPRequestHandler):
                 dur = meta.get("duration", 0)
                 meta["splits"] = sorted({round(float(t), 4) for t in b["splits"] if 0 < float(t) < dur})
             write_meta(pid, meta)
-        self.send_json({"ok": True, "style": project_style(pid)})
+        self.send_json({"ok": True, "style": section_style(meta, sid, project_style(pid))})
 
     def api_plan(self, q, pid):
         key, style, plan = project_plan(pid)
         meta = read_meta(pid)
-        scenes = [{"t_in": s["t_in"], "t_out": s["t_out"], "mode": s["mode"],
+        parts = plan_parts(style, plan)
+        sty = {p["sec"]: p["style"] for p in parts}
+        scenes = [{"t_in": s["t_in"], "t_out": s["t_out"], "mode": s["mode"], "sec": s.get("sec", 0),
                    "text": " / ".join(" ".join(t["text"] for t in l["tokens"]) for l in s["lines"]),
-                   "red": any(t["color"].lower() == style["colors"]["red"].lower() for l in s["lines"] for t in l["tokens"]),
+                   "red": any(t["color"].lower() == sty.get(s.get("sec", 0), style)["colors"]["red"].lower()
+                              for l in s["lines"] for t in l["tokens"]),
                    "decos": [d["kind"] for d in s.get("decos", [])],
                    "wi": sorted({t["wi"] for l in s["lines"] for t in l["tokens"] if t.get("wi") is not None}),
                    "behind": bool(s.get("behind"))}
@@ -1068,18 +1158,25 @@ class Handler(BaseHTTPRequestHandler):
         mv = meta.get("matte_v", 0)
         mjob = next((j for j in JOBS.values() if j["project"] == pid and j["kind"] in ("matte", "mp4", "alpha")
                      and j["status"] == "running" and j["message"].startswith("Recortando")), None)
-        bl = style["effects"].get("blend", {})
-        g = style["effects"].get("gradient", {})
-        live = {"fps": LIVE_FPS, "w": w, "h": h, "segs": live_info(key, style, plan, meta["duration"], mv)["segs"],
-                "blend": bl.get("mode", "difference") if bl.get("enabled") else None,
-                # gradiente atrás da legenda: imagem única, pedida de novo só quando ele muda
-                "bg": hashlib.sha1(json.dumps([g, w, h], sort_keys=True).encode()).hexdigest()[:12] if g.get("enabled") else None}
+        info = live_info(key, style, plan, meta["duration"], mv)
+
+        def look(st):
+            bl = st["effects"].get("blend", {})
+            g = st["effects"].get("gradient", {})
+            return {"blend": bl.get("mode", "difference") if bl.get("enabled") else None,
+                    # gradiente atrás da legenda: imagem única, pedida de novo só quando ele muda
+                    "bg": hashlib.sha1(json.dumps([g, w, h], sort_keys=True).encode()).hexdigest()[:12] if g.get("enabled") else None}
+        live = {"fps": LIVE_FPS, "w": w, "h": h, "segs": info["segs"], **look(parts[0]["style"]),
+                # vários estilos: mistura e gradiente de cada bloco, a partir do 1º quadro dele
+                "parts": [{"f0": f0, **look(p["style"])} for p, f0 in zip(parts, info["f0"])]}
         # texto atrás da pessoa: quantos quadros ainda sem recorte, e o trabalho que está recortando
         live["matte"] = {"need": matte.count(matte_need(pid, meta, plan)), "v": mv, "model": bool(matte.providers()),
                          "job": job_public(mjob) if mjob else None}
         self.send_json({"key": key, "duration": meta["duration"], "scenes": scenes, "flashes": plan["flashes"],
                         "words": plan.get("words", []), "groups": plan.get("groups", []), "live": live,
-                        "cuts": plan.get("cuts", []), "splits": meta.get("splits", [])})
+                        "cuts": plan.get("cuts", []), "splits": meta.get("splits", []),
+                        "sections": plan.get("sections") or [{"id": "", "mark": None, "n": 1,
+                                                              "preset": presets.resolve_existing(meta.get("preset"))}]})
 
     def api_matte(self, q, pid):
         """Começa (ou devolve) o recorte da pessoa dos trechos {atras} que ainda não têm."""
@@ -1097,7 +1194,8 @@ class Handler(BaseHTTPRequestHandler):
     def api_live_bg(self, q, pid):
         import cv2
         key, style, plan = project_plan(pid)
-        img = live_renderer(pid, key, style, plan).gradient_layer()
+        R = live_renderer(pid, key, style, plan)
+        img = R.gradient_layer(int(q.get("p", 0) or 0)) if isinstance(R, MultiRenderer) else R.gradient_layer()
         if img is None:
             return self.send_json({"error": "sem gradiente"}, 404)
         self.send_bytes(cv2.imencode(".png", cv2.cvtColor(img, cv2.COLOR_RGBA2BGRA))[1].tobytes(), "image/png")

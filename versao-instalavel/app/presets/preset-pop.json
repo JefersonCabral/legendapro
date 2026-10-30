@@ -1,0 +1,118 @@
+{
+  "name": "preset-pop",
+  "title": "Preset POP",
+  "description": "Legenda padrão de reels: Poppins Bold branca com sombra forte, as palavras vão aparecendo uma a uma no tempo da fala, cada uma com um pop (nasce menor, passa do tamanho e assenta). Até 3 palavras por legenda (ajustável em “Palavras por legenda”). Destaque marcado à mão fica amarelo e maior.",
+  "fonts": {
+    "sans": {
+      "file": "Poppins-Bold.ttf",
+      "tracking": -0.02
+    },
+    "hero": {
+      "file": "Poppins-Bold.ttf",
+      "tracking": -0.02
+    },
+    "serif": {
+      "file": "Poppins-Bold.ttf",
+      "tracking": -0.02
+    }
+  },
+  "layout": {
+    "anchor_mode": "baseline",
+    "anchor_y": 0.68,
+    "safe_width": 0.86,
+    "base_size": 0.07,
+    "support_scale": 1.0,
+    "hero_scale": 1.3,
+    "hero_max_width": 0.86,
+    "serif_scale": 1.0,
+    "gap_above": 0.02,
+    "gap_below": 0.02
+  },
+  "colors": {
+    "text": "#FFFFFF",
+    "hero": "#FFD60A",
+    "red": "#FF3B30",
+    "accent": "#FFD60A"
+  },
+  "effects": {
+    "shadow": {
+      "opacity": 0.9,
+      "blur": 0.006,
+      "offset_y": 0.004
+    },
+    "gradient": {
+      "enabled": false,
+      "top": 0.45,
+      "full": 0.95,
+      "opacity": 0.6,
+      "curve": 1.0,
+      "color": "#000000"
+    },
+    "glow": {},
+    "anim": {
+      "plain": {
+        "type": "pop",
+        "reveal": "word",
+        "duration": 0.22,
+        "fade": 0.06,
+        "scale_from": 0.55,
+        "overshoot": 1.9
+      },
+      "support": {
+        "type": "pop",
+        "reveal": "word",
+        "duration": 0.22,
+        "fade": 0.06,
+        "scale_from": 0.55,
+        "overshoot": 1.9
+      },
+      "hero": {
+        "type": "pop",
+        "reveal": "word",
+        "duration": 0.26,
+        "fade": 0.06,
+        "scale_from": 0.45,
+        "overshoot": 2.2
+      },
+      "serif": {
+        "type": "pop",
+        "reveal": "word",
+        "duration": 0.22,
+        "fade": 0.06,
+        "scale_from": 0.55,
+        "overshoot": 1.9
+      }
+    },
+    "exit": {
+      "type": "cut"
+    },
+    "lead": 0.02
+  },
+  "rules": {
+    "engine": "phrase",
+    "emphasis_threshold": 2.4,
+    "emphasis_every": 0,
+    "emphasis_gap": 2.0,
+    "phrase_max_words": 7,
+    "support_max_words": 3,
+    "support_max_chars": 18,
+    "chunk_max_words": 3,
+    "chunk_max_chars": 22,
+    "chunk_pause": 0.45,
+    "max_hold": 1.2,
+    "case": "keep",
+    "strip_punct": ",;:",
+    "hero_number_unit": true,
+    "serif_tail": false,
+    "article_alone": false
+  },
+  "effect_notes": {
+    "red": "palavra na cor de destaque vermelha",
+    "circle": "elipse desenhada em volta",
+    "underline": "traço desenhado embaixo da linha",
+    "box": "caixa chapada atrás da linha",
+    "break": "começa uma legenda nova depois desta palavra",
+    "color": "cor só desta palavra",
+    "destaque": "palavra amarela e maior, com pop mais forte"
+  }
+}

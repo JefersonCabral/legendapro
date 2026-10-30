@@ -7,8 +7,10 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const S = {
   status: null, presets: [], fonts: [], projects: [], builtin: [],
   cur: null,          // projeto aberto (dados do servidor)
-  base: null,         // preset base (json)
-  overrides: {},
+  base: null,         // preset base (json) do bloco de estilo editado
+  overrides: {},      // ajustes do bloco editado
+  secs: {},           // blocos de estilo ({estilo:id} no texto): id -> {preset, overrides}
+  sec: "",            // bloco editado na aba Estilo ("" = o 1º, estilo do projeto)
   plan: null,
   t: 0,
   jobs: {},           // id -> job
@@ -21,6 +23,7 @@ const S = {
   projSearch: "",
   cuts: [],           // trechos cortados do vídeo [[início, fim]] (segundos do vídeo ORIGINAL)
   splits: [],         // divisões da lâmina (segundos do vídeo original; só marcam clipes)
+  fmt: null,          // formatação copiada de uma palavra {flags, color, word}
 };
 
 /* ------------------------------------------------------------ motor
@@ -137,9 +140,10 @@ function ask({ title, text = "", html = "", ok = "OK", cancel = "Cancelar", dang
    Cada passo guarda texto + estilo + ajustes. Vale para correções, efeitos, cores,
    troca de estilo, sliders e arrastar a legenda. */
 const H = { past: [], future: [], group: null, t: 0 };
-const snap = text => ({ text: text ?? $("#text").value, preset: S.cur?.preset, overrides: structuredClone(S.overrides),
-  cuts: structuredClone(S.cuts), splits: [...S.splits] });
+const snap = text => (storeEd(), { text: text ?? $("#text").value, preset: S.cur?.preset, overrides: structuredClone(S.cur?.overrides || {}),
+  secs: structuredClone(S.secs || {}), cuts: structuredClone(S.cuts), splits: [...S.splits] });
 const sameSnap = (a, b) => a.text === b.text && a.preset === b.preset && JSON.stringify(a.overrides) === JSON.stringify(b.overrides)
+  && JSON.stringify(a.secs || {}) === JSON.stringify(b.secs || {})
   && JSON.stringify(a.cuts || []) === JSON.stringify(b.cuts || []) && JSON.stringify(a.splits || []) === JSON.stringify(b.splits || []);
 // group: mudanças seguidas do mesmo controle (arrastar um slider) viram um passo só
 function checkpoint(group = null, text) {
@@ -156,13 +160,14 @@ function syncHistory() {
 }
 async function restore(s) {
   const presetChanged = s.preset !== S.cur.preset;
-  S.overrides = structuredClone(s.overrides);
+  S.cur.preset = s.preset; S.cur.overrides = structuredClone(s.overrides); S.secs = structuredClone(s.secs || {});
+  if (S.sec && !S.secs[S.sec]) S.sec = "";
+  loadEd();
   S.cuts = structuredClone(s.cuts || []); S.splits = [...(s.splits || [])]; TL.clip = null;
-  if (presetChanged) { S.cur.preset = s.preset; S.base = S.presets.find(p => p.name === s.preset) || S.base; }
   clearTimeout(saveTimer);
   $("#text").value = s.text; S.textBefore = s.text; S.dirty = false;
-  try { await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { text: s.text, preset: s.preset, reset_overrides: false, overrides: S.overrides,
-                                                                    cuts: S.cuts, splits: S.splits } }); }
+  try { await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { text: s.text, preset: s.preset, reset_overrides: false,
+                                                                    overrides: S.cur.overrides, sections: S.secs, cuts: S.cuts, splits: S.splits } }); }
   catch (e) { return toast(e.message, true); }
   setSave("salvo", "ok");
   renderPresets(); syncControls(); syncEffects();
@@ -269,7 +274,9 @@ const CONTROLS = [
     { p: "rules.sans_italic_lead", l: "Itálico na abertura (Essa é, você)", t: "switch" },
     { p: "rules.cards.enabled", l: "Cards de citação", t: "switch" },
     { p: "rules.cards.auto_repetition", l: "Card automático em repetições", t: "switch" },
-    { p: "rules.chunk_max_chars", l: "Máximo de letras por legenda curta", t: "range", min: 6, max: 22, step: 1, f: v => `${v} letras` },
+    { p: "rules.chunk_max_words", eng: "phrase", l: "Palavras por legenda", t: "range", min: 1, max: 6, step: 1,
+      f: v => v == 1 ? "1 palavra" : `até ${v} palavras` },
+    { p: "rules.chunk_max_chars", l: "Máximo de letras por legenda curta", t: "range", min: 6, max: 40, step: 1, f: v => `${v} letras` },
   ]},
 ];
 
@@ -341,10 +348,14 @@ function syncControls() {
 }
 $("#btnAdv").addEventListener("click", () => { S.showAdv = !S.showAdv; lsSet("lp.adv", S.showAdv ? "1" : "0"); syncControls(); });
 
+// ajustes a enviar, por bloco: guardados na hora da edição (trocar de bloco antes do envio não troca o destino)
+const ovPending = new Map();
 const pushOverrides = debounce(async () => {
   if (!S.cur) return;
+  const items = [...ovPending]; ovPending.clear();
   try {
-    await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { overrides: S.overrides } });
+    for (const [sec, ov] of items)
+      await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: sec ? { section: sec, overrides: ov } : { overrides: ov } });
     await refreshPlan();
   } catch (e) { toast(e.message, true); }
 }, 120);
@@ -353,8 +364,125 @@ const ctlDefault = p => CONTROLS.flatMap(g => g.items).find(c => c.p === p)?.def
 function setOverride(p, v, cp = true) {
   if (cp) checkpoint(`ctl:${p}`);
   if ((getPath(S.base, p) ?? ctlDefault(p)) === v) delPath(S.overrides, p); else setPath(S.overrides, p, v);
+  // mais palavras por legenda precisa de espaço para as letras delas (senão o limite de letras corta antes)
+  if (p === "rules.chunk_max_words") {
+    const st = merge(S.base, S.overrides), need = Math.min(40, Math.max(getPath(S.base, "rules.chunk_max_chars") ?? 14, v * 7 + 1));
+    if ((getPath(st, "rules.chunk_max_chars") ?? 14) < need) { setPath(S.overrides, "rules.chunk_max_chars", need); syncControls(); }
+  }
+  ovPending.set(S.sec, S.overrides);
   for (const w of $$(`#controls .ctl[data-p="${p}"]`)) w.classList.toggle("changed", getPath(S.overrides, p) !== undefined);
   pushOverrides();
+}
+
+/* ------------------------------------------------------------ blocos de estilo
+   O texto pode ser dividido em blocos ({estilo:id}): cada bloco tem preset e ajustes próprios
+   (meta.sections[id]); o 1º bloco usa o estilo do projeto. A aba Estilo edita o bloco escolhido (S.sec),
+   que acompanha a palavra clicada. S.base / S.overrides são sempre os do bloco editado. */
+// motor antigo (API < 2) leria {estilo:id} como palavra: a divisão só aparece com motor novo
+const canSections = () => (S.status?.api || 0) >= 2;
+const secList = () => S.plan?.sections || [{ id: "", n: 1, mark: null, preset: S.cur?.preset }];
+const multiSec = () => secList().length > 1;
+const secNum = id => (secList().findIndex(x => x.id === id) + 1) || 1;
+const secOfWord = i => secList()[S.plan?.words[i]?.sec ?? 0]?.id ?? "";
+const edPreset = () => (S.sec && S.secs[S.sec]?.preset) || S.cur?.preset;
+const edBody = b => (S.sec ? { section: S.sec, ...b } : b);
+// guarda o preset/ajustes do bloco editado no lugar dele (projeto ou meta.sections)
+function storeEd() {
+  if (!S.cur) return;
+  if (S.sec) S.secs[S.sec] = { preset: edPreset(), overrides: S.overrides };
+  else S.cur.overrides = S.overrides;
+}
+function setEdPreset(name) {
+  if (S.sec) S.secs[S.sec] = { preset: name, overrides: S.overrides };
+  else { S.cur.preset = name; S.cur.overrides = S.overrides; }
+}
+function loadEd() {
+  S.base = S.presets.find(p => p.name === edPreset()) || S.presets[0];
+  S.overrides = S.sec ? (S.secs[S.sec]?.overrides || {}) : (S.cur.overrides || {});
+  if (S.sec && S.secs[S.sec]) S.secs[S.sec].overrides = S.overrides;
+}
+function selectSec(id) {
+  if (!secList().some(x => x.id === id)) id = "";
+  if (id === S.sec) return;
+  storeEd(); S.sec = id; loadEd();
+  renderPresets(); syncControls(); syncEffects(); renderSecBar();
+}
+// a palavra i começa um bloco (logo depois de uma divisão)? devolve o bloco
+function startsSec(i) {
+  const w = S.plan?.words[i], b = secList()[w?.sec];
+  if (!w?.span || !b?.mark) return null;
+  const between = $("#text").value.slice(b.mark[1], w.span[0]).replace(/\{[^}]*\}/g, "");
+  return /^[\s|"“”]*$/.test(between) ? b : null;
+}
+const secRange = k => {
+  const ws = (S.plan?.words || []).filter(w => w.sec === k && !w.cut);
+  return ws.length ? `${fmtTime(o2e(ws[0].start))}–${fmtTime(o2e(ws.at(-1).end))}` : "sem fala";
+};
+const secChip = (b, k) => b ? `<span class="rt-sec${b.id === S.sec ? " on" : ""}" data-sec="${escapeHtml(b.id)}" data-k="${k}" title="Clique para editar o estilo deste bloco">` +
+  `<b>Bloco ${k + 1}</b> · ${escapeHtml(presetTitle(b.preset))}` +
+  (b.mark ? `<i class="rt-sec-x" title="Tirar esta divisão (o texto volta para o bloco de cima)">×</i>` : "") + `</span>` : "";
+function renderSecBar() {
+  const bar = $("#secBar"); if (!bar) return;
+  const secs = secList();
+  $("#styleHint").textContent = secs.length > 1
+    ? `Vale só para o bloco ${secNum(S.sec)}. Clique numa palavra (ou num bloco abaixo) para editar outro.`
+    : "Vale para o vídeo inteiro. Para mudar só algumas palavras, clique nelas.";
+  if (secs.length < 2) {
+    if (!canSections()) { bar.innerHTML = ""; return; }
+    bar.innerHTML = `<p class="sec-tip">Quer outro estilo em parte do vídeo? Clique na palavra onde ele começa e use <b>Novo estilo daqui em diante</b>.</p>`;
+    return;
+  }
+  bar.innerHTML = `<div class="sec-label">Este vídeo tem ${secs.length} estilos · editando o bloco ${secNum(S.sec)}</div><div class="sec-chips">` +
+    secs.map((b, k) => `<button class="sec-chip${b.id === S.sec ? " on" : ""}" data-sec="${escapeHtml(b.id)}">` +
+      `<b>Bloco ${k + 1}</b><span>${escapeHtml(presetTitle(b.id === S.sec ? edPreset() : b.preset))}</span><small>${secRange(k)}</small></button>`).join("") + "</div>";
+  for (const el of $$("#rich .rt-sec")) el.classList.toggle("on", el.dataset.sec === S.sec);
+}
+$("#secBar").addEventListener("click", e => {
+  const b = e.target.closest(".sec-chip"); if (!b) return;
+  clearSel(); selectSec(b.dataset.sec);
+  // leva o vídeo até o começo do bloco
+  const k = secList().findIndex(x => x.id === b.dataset.sec), i = S.plan?.words.findIndex(w => w.sec === k && !w.cut);
+  if (i >= 0) seek(wordViewTime(i));
+});
+$("#rich").addEventListener("click", e => {
+  const c = e.target.closest(".rt-sec"); if (!c) return;
+  e.stopPropagation();
+  if (e.target.closest(".rt-sec-x")) return removeSec(+c.dataset.k);
+  clearSel(); selectSec(c.dataset.sec); openTab("estilo");
+}, true);
+const newSecId = v => { let id; do { id = "e" + Math.random().toString(36).slice(2, 6); } while (S.secs[id] || v.includes(`{estilo:${id}}`)); return id; };
+async function removeSec(k) {
+  const b = secList()[k]; if (!b?.mark || editing) return;
+  if (S.dirty) await saveNow();
+  const v = $("#text").value;
+  if (v.slice(b.mark[0], b.mark[1]) !== `{estilo:${b.id}}`) return;
+  const n = k + 1;
+  await setText(spliceText(v, [cutTag(v, b.mark)]));
+  toast(`Divisão do bloco ${n} removida`, false, { label: "Desfazer", fn: undo });
+}
+// "Novo estilo daqui em diante": divide o texto antes da palavra escolhida. O bloco novo nasce com o
+// mesmo estilo do bloco de onde saiu (nada muda na tela) e a aba Estilo abre nele para escolher outro.
+async function splitHere() {
+  if (editing || !S.sel.length) return;
+  const st = startsSec(S.sel[0]);
+  if (st) return removeSec(secList().indexOf(st));
+  editing = true;
+  try {
+    if (S.dirty) await saveNow();
+    const w = S.plan.words[S.sel[0]]; if (!w?.span) return;
+    const v = $("#text").value;
+    storeEd();
+    const from = secList()[w.sec]?.id ?? "";
+    const src = (from && S.secs[from]) || { preset: S.cur.preset, overrides: S.cur.overrides };
+    const id = newSecId(v);
+    checkpoint();
+    S.secs[id] = { preset: src?.preset || S.cur.preset, overrides: structuredClone(src?.overrides || {}) };
+    await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { section: id, preset: S.secs[id].preset, reset_overrides: false, overrides: S.secs[id].overrides } });
+    await setText(spliceText(v, [[w.span[0], w.span[0], `{estilo:${id}} `]]), false);
+    selectSec(id); openTab("estilo");
+    toast(`Bloco ${secNum(id)} criado: escolha o estilo dele`, false, { label: "Desfazer", fn: undo });
+  } catch (e) { toast(e.message, true); }
+  finally { editing = false; }
 }
 
 /* ------------------------------------------------------------ presets */
@@ -386,22 +514,24 @@ async function deletePreset(p) {
   if (!await ask({ title: `Apagar o estilo “${p.title || p.name}”?`, text: "Os projetos que usam este estilo voltam para o estilo padrão. Isso não pode ser desfeito.", ok: "Apagar", danger: true })) return;
   try { await api(`/api/presets/${p.name}`, { method: "DELETE" }); } catch (e) { return toast(e.message, true); }
   await loadPresets(); toast("Estilo apagado");
-  if (S.cur?.preset === p.name) openProject(S.cur.id);   // o projeto volta para o estilo padrão
+  // o projeto (ou o bloco) volta para o estilo padrão
+  if (S.cur?.preset === p.name || Object.values(S.secs).some(x => x.preset === p.name)) openProject(S.cur.id);
 }
 
 async function applyPreset(p) {
-  if (!S.cur || p.name === S.cur.preset) return;
+  if (!S.cur || p.name === edPreset()) return;
   checkpoint();
-  await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { preset: p.name } });
-  S.cur.preset = p.name; S.base = p; S.overrides = {};
-  S.uploadPreset = p.name; lsSet("lp.uploadPreset", p.name);
-  renderPresets(); syncControls(); syncEffects(); loadProjects(); await refreshPlan();
-  toast(`Estilo “${p.title || p.name}” aplicado`, false, { label: "Desfazer", fn: undo });
+  await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: edBody({ preset: p.name }) });
+  S.base = p; S.overrides = {}; setEdPreset(p.name);
+  if (!S.sec) { S.uploadPreset = p.name; lsSet("lp.uploadPreset", p.name); }
+  renderPresets(); syncControls(); syncEffects(); renderSecBar(); loadProjects(); await refreshPlan();
+  const blk = multiSec() ? ` no bloco ${secNum(S.sec)}` : "";
+  toast(`Estilo “${p.title || p.name}” aplicado${blk}`, false, { label: "Desfazer", fn: undo });
 }
 
 function renderPresets() {
   const grid = $("#presetGrid"); grid.innerHTML = "";
-  const curName = S.cur?.preset;
+  const curName = edPreset();
   for (const p of S.presets) {
     grid.appendChild(presetCard(p, { active: p.name === curName, deletable: !S.builtin.includes(p.name), onPick: applyPreset }));
   }
@@ -426,7 +556,7 @@ async function loadPresets() {
   const r = await api("/api/presets");
   S.presets = r.presets.map(p => ({ ...p, _v: Date.now() })); S.fonts = r.fonts; S.builtin = r.builtin || [];
   $("#newPresetName").placeholder = r.next_title || "Preset novo";
-  if (S.cur) S.base = S.presets.find(p => p.name === S.cur.preset) || S.base;
+  if (S.cur) S.base = S.presets.find(p => p.name === edPreset()) || S.base;
   buildControls(); syncControls(); renderPresets();
 }
 
@@ -515,8 +645,10 @@ async function openProject(id) {
   S.cur = p; S.t = 0; S.plan = null; liveReset(); matteWatch = null; $("#matteState").hidden = true;
   S.dirty = false; S.hits = []; clearSel();
   H.past = []; H.future = []; H.group = null;
+  p.overrides = p.overrides || {};
+  S.secs = p.sections || {}; S.sec = "";
   S.base = S.presets.find(x => x.name === p.preset) || S.presets[0];
-  S.overrides = p.overrides || {};
+  S.overrides = p.overrides;
   S.cuts = normCuts(p.cuts || [], p.duration); S.splits = [...(p.splits || [])]; TL.clip = null; TL.pending = 0;
   // "Altura na tela" (layout.anchor_y) saiu da interface: o ajuste antigo vira deslocamento (mesmo efeito)
   const ay = getPath(S.overrides, "layout.anchor_y");
@@ -540,7 +672,7 @@ async function openProject(id) {
   $("#inspector").classList.toggle("disabled", !p.has_words);
   $("#phoneTip").hidden = !p.has_words || lsGet("lp.tipSeen") === "1";
   syncHistory();
-  renderPresets(); syncControls(); syncEffects(); renderExports(); loadProjects();
+  renderPresets(); syncControls(); syncEffects(); renderSecBar(); renderExports(); loadProjects();
   if (p.job && p.job.status === "running") watchJob(p.job);
   if (p.has_words) {
     await refreshPlan();
@@ -681,6 +813,7 @@ async function refreshPlan() {
   // cortes normalizados pelo servidor (salvo se ainda há um corte local a caminho dele)
   if (!TL.pending && plan.cuts) { S.cuts = normCuts(plan.cuts, S.cur.duration); S.splits = [...(plan.splits || [])]; }
   S.sel = S.sel.filter(i => i < S.plan.words.length);
+  if (!secList().some(x => x.id === S.sec)) selectSec(""); else renderSecBar();   // a divisão do bloco editado saiu
   liveSetup(); drawTimeline(); showAt(); livePump(); renderRich(); renderPop(); updateExportBadges(); updateMatte();
   if (pendingGroup && !S.dirty) {   // tamanho/posição de trecho que chegou enquanto o texto mudava
     const pg = pendingGroup; pendingGroup = null;
@@ -829,6 +962,13 @@ function drawTimeline() {
   for (const w of emph) {
     const el = document.createElement("div"); el.className = "tl-emph"; el.style.left = `${X(w.start)}%`; fl.appendChild(el);
   }
+  // vários estilos: onde começa cada bloco
+  secList().forEach((b, k) => {
+    if (!k) return;
+    const w = S.plan.words.find(x => x.sec === k && !x.cut); if (!w) return;
+    const el = document.createElement("div"); el.className = "tl-sec"; el.style.left = `${X(w.start)}%`;
+    el.title = `Bloco ${k + 1}: ${presetTitle(b.preset)}`; el.innerHTML = `<i>${k + 1}</i>`; fl.appendChild(el);
+  });
   // emendas (onde saiu um trecho cortado)
   for (const [a] of S.cuts) {
     const el = document.createElement("div"); el.className = "tl-join"; el.style.left = `${X(a)}%`; fl.appendChild(el);
@@ -1014,6 +1154,8 @@ const LV = {
   bg: null,             // gradiente desenhado na camada de baixo (muda só quando o gradiente muda)
   bgImg: null,          // a imagem do gradiente (também vai no recorte da pessoa)
   person: null,         // recorte da pessoa do quadro atual {bmp, x, y} (texto atrás dela)
+  bgCache: new Map(),   // assinatura do gradiente -> imagem (um por bloco de estilo)
+  blend: null,          // modo de mistura aplicado às camadas "blend"
 };
 // arrastar desloca só as camadas que se movem (o gradiente e o recorte da pessoa ficam parados)
 const BACK_LAYERS = ["back_normal", "back_screen", "back_blend"], FRONT_LAYERS = ["normal", "screen", "blend", "flash"];
@@ -1038,6 +1180,7 @@ const liveTotal = () => { const segs = S.plan?.live?.segs; return segs?.length ?
 
 function liveReset() {
   LV.gen++; LV.inflight.clear(); LV.reqs = 0; LV.want = LV.shown = LV.bg = LV.vt = LV.pendingSeek = null; LV.vfc = false;
+  LV.bgCache.clear();
   for (const p of LV.bmps.values()) p.then(ls => ls.forEach(l => l.bmp.close?.())).catch(() => {});
   LV.blobs.clear(); LV.bmps.clear(); LV.ready.clear();
   paintLive(null); paintBg(null);
@@ -1064,15 +1207,35 @@ function paintPerson() {
   ctx.drawImage(p.bmp, p.x, p.y, p.w, p.h);   // o recorte vem em meia resolução
   ctx.restore();
 }
-async function liveBg() {
-  const lv = S.plan?.live, pid = S.cur?.id;
-  if (!lv || lv.bg === LV.bg) return;
-  LV.bg = lv.bg;
-  if (!lv.bg) return paintBg(null);
+// vários estilos no vídeo: cada bloco tem o próprio gradiente e modo de mistura (a partir do 1º quadro dele)
+function partAt(i) {
+  const ps = S.plan?.live?.parts || [];
+  let k = 0;
+  ps.forEach((p, j) => { if (i >= p.f0) k = j; });
+  return k;
+}
+function liveLook(i) {
+  const lv = S.plan?.live; if (!lv) return;
+  const k = partAt(i), p = lv.parts?.[k] || lv;
+  const mode = BLEND_CSS[p.blend] || "normal";
+  if (LV.blend !== mode) {
+    LV.blend = mode;
+    for (const n of ["blend", "back_blend"]) $(`#live canvas[data-l="${n}"]`).style.mixBlendMode = mode;
+  }
+  liveBg(p.bg, k);
+}
+async function liveBg(want, k = 0) {
+  const pid = S.cur?.id;
+  if (want === LV.bg) return;
+  LV.bg = want;
+  if (!want) return paintBg(null);
+  if (LV.bgCache.has(want)) return paintBg(LV.bgCache.get(want));
   try {
-    const img = await createImageBitmap(await (await fetch(`${ENGINE}/api/projects/${pid}/live_bg.png?k=${lv.bg}`)).blob());
-    if (LV.bg === lv.bg && S.cur?.id === pid) paintBg(img);
-  } catch { LV.bg = null; }
+    const img = await createImageBitmap(await (await fetch(`${ENGINE}/api/projects/${pid}/live_bg.png?k=${want}&p=${k}`)).blob());
+    if (S.cur?.id !== pid) return;
+    LV.bgCache.set(want, img);
+    if (LV.bg === want) paintBg(img);
+  } catch { if (LV.bg === want) LV.bg = null; }
 }
 // plano novo: ajusta as camadas ao tamanho/modo de mistura e solta quadros que não servem mais
 function liveSetup() {
@@ -1080,8 +1243,7 @@ function liveSetup() {
   for (const c of $$("#live canvas")) {
     if (c.width !== lv.w || c.height !== lv.h) { c.width = lv.w; c.height = lv.h; LV.shown = LV.bg = null; }
   }
-  liveBg();
-  for (const n of ["blend", "back_blend"]) $(`#live canvas[data-l="${n}"]`).style.mixBlendMode = BLEND_CSS[lv.blend] || "normal";
+  LV.blend = null; liveLook(frameAt(shownTime()));
   if (LV.blobs.size > 4000) {   // mantém o plano atual (e o anterior fica para o desfazer até encher)
     const keep = new Set(); for (let i = 0, n = liveTotal(); i < n; i++) keep.add(liveKey(i));
     for (const k of LV.blobs.keys()) if (!keep.has(k)) LV.blobs.delete(k);
@@ -1118,6 +1280,7 @@ async function liveDraw(i) {
   if (!S.plan?.live) return;
   const k = liveKey(i);
   LV.want = k;
+  liveLook(i);
   if (k === "0") { LV.shown = k; liveWaiting(false); return paintLive(null); }
   if (!LV.blobs.has(k)) { liveWaiting(true); livePump(); return; }
   liveWaiting(false);
@@ -1349,6 +1512,8 @@ const HELP = `
         <li><b>Texto atrás da pessoa:</b> clique nas legendas na linha do tempo (shift ou ctrl para várias) e use “Atrás da pessoa” no menu. O vídeo é recortado só nesses trechos; arraste a palavra para posicionar cada trecho e ajuste o tamanho no menu.</li>
         <li><b>Cortar o vídeo:</b> ponha a agulha onde quer dividir e aperte <kbd>Ctrl</kbd>+<kbd>B</kbd> (ou a tesoura). Clique no clipe na faixa de vídeo e aperte <kbd>Delete</kbd>: o trecho sai (vídeo, áudio e legenda) e o resto se junta. A exportação já sai cortada.</li>
         <li>Na aba <b>Estilo</b>, escolha o visual (passe o mouse para ver animado) e ajuste tamanho, cores e fontes.</li>
+        <li><b>Copiar formatação:</b> no menu da palavra, “Copiar formatação” (<kbd>Alt</kbd>+<kbd>C</kbd>) guarda os efeitos e a cor; selecione outras palavras e use “Colar formatação” (<kbd>Alt</kbd>+<kbd>V</kbd>).</li>
+        <li><b>Vários estilos no mesmo vídeo:</b> clique na palavra onde o novo estilo começa e use “Novo estilo daqui em diante”. Cada bloco tem o próprio estilo e os próprios ajustes: clique numa palavra (ou no bloco, na aba Estilo) para editar aquele bloco.</li>
         <li>Dê <b>play</b> para ver em movimento e <b>exporte</b> quando estiver pronto.</li>
       </ol>
     </section>
@@ -1522,8 +1687,11 @@ function renderRich() {
   if (rawMode || S.dirty || !S.plan || !S.cur?.has_words) return;
   const v = $("#text").value;
   const ws = S.plan.words.map((w, i) => ({ i, w })).filter(x => x.w.span).sort((a, b) => a.w.span[0] - b.w.span[0]);
-  const gap = s => s.split(/(\{\/?card\}|\{atras(?::[^}\s]*)?\}|\{\/atras\}|["“”]|\||\n)/).map(x =>
+  const secs = secList();
+  let mk = 0;   // divisões de estilo, em ordem (a k-ésima abre o bloco k+1)
+  const gap = s => s.split(/(\{\/?card\}|\{atras(?::[^}\s]*)?\}|\{\/atras\}|\{estilo:[A-Za-z0-9_-]+\}|["“”]|\||\n)/).map(x =>
     x === "\n" ? "<br>" : x === "|" ? `<span class="rt-break" title="Quebra de legenda">⏎</span>`
+      : /^\{estilo:/.test(x) ? secChip(secs[++mk], mk)
       : x === "{/atras}" ? `<span class="rt-behind" title="Fim do trecho atrás da pessoa">◂</span>`
       : /^\{atras/.test(x) ? `<span class="rt-behind" title="Texto atrás da pessoa">atrás da pessoa ▸</span>`
       : /^(\{\/?card\}|["“”])$/.test(x) ? `<span class="rt-q" title="Card de citação">“</span>` : escapeHtml(x)).join("");
@@ -1545,7 +1713,7 @@ function renderRich() {
     pos = e;
   }
   out += gap(v.slice(pos));
-  box.innerHTML = out;
+  box.innerHTML = (secs.length > 1 ? secChip(secs[0], 0) : "") + out;
   S.nowWi = null; markRichNow();
 }
 function markRich() {
@@ -1621,6 +1789,7 @@ $("#hits").addEventListener("pointerdown", e => {
   const hit = e.target.closest(".hit");
   if (e.button !== 0 || !hit) return;
   const g = S.plan?.groups?.[S.plan.words[+hit.dataset.wi]?.bg];
+  if (!g) selectSec(secOfWord(+hit.dataset.wi));   // vários estilos: arrastar move só o bloco da palavra
   drag = { x: e.clientX, y: e.clientY, moved: false, id: e.pointerId, group: g || null,
            ox: g ? g.dx : curOffset("layout.offset_x"), oy: g ? g.dy : curOffset("layout.offset_y") };
 });
@@ -1657,7 +1826,7 @@ $("#hits").addEventListener("pointerup", () => {
     return;
   }
   checkpoint(); setOverride("layout.offset_x", d.nx, false); setOverride("layout.offset_y", d.ny, false); syncControls();
-  toast("Legenda movida", false, { label: "Desfazer", fn: undo });
+  toast(multiSec() ? `Legenda do bloco ${secNum(S.sec)} movida` : "Legenda movida", false, { label: "Desfazer", fn: undo });
 });
 $("#hits").addEventListener("click", e => {
   if (dragMoved) { dragMoved = false; return; }
@@ -1765,6 +1934,9 @@ function syncEffects() {
 function renderPop() {
   const pop = $("#wordPop");
   const pl = $("#player");
+  // vários estilos: a aba Estilo e os efeitos do menu seguem o bloco da palavra escolhida
+  const sk = S.sel.join();
+  if (sk !== S.secSel) { S.secSel = sk; if (S.sel.length && S.plan) selectSec(secOfWord(S.sel[0])); }
   markRich();
   if (!S.sel.length || !S.plan || !pl.paused) { pop.hidden = true; shiftPhone(0); return; }
   const toks = selToks();
@@ -1785,12 +1957,21 @@ function renderPop() {
       : m === "destaque" ? isEmph(toks)
       : m === "card" ? !!cardAround(v, toks[0].s, lastEnd)
       : m === "behind" ? S.sel.every(i => S.plan.words[i]?.bg != null)
+      : m === "section" ? !!startsSec(S.sel[0])
       : toks.every(t => t.p.flags.has(m)));
   }
   // trecho atrás da pessoa: tamanho e posição própria (quando a seleção está num trecho só)
   const gs = new Set(S.sel.map(i => S.plan.words[i]?.bg));
   const g = gs.size === 1 ? groupOf(S.sel[0]) : null;
   $("#wpBehind").hidden = !g;
+  const pb = $("#wpPasteFmt");
+  pb.disabled = !S.fmt;
+  pb.title = S.fmt ? `Aplica a formatação de “${S.fmt.word}” (${fmtName(S.fmt)}) nas palavras selecionadas (Alt+V)`
+    : "Copie antes a formatação de uma palavra (Alt+C)";
+  const sb = $('#wpMarks button[data-mark="section"]');
+  sb.hidden = !canSections();
+  sb.disabled = S.sel[0] === 0 && !startsSec(0);
+  $("b + span", sb).textContent = startsSec(S.sel[0]) ? "Tirar divisão de estilo" : "Novo estilo daqui em diante";
   if (g) {
     const sl = $("#wpBehindSize");
     if (document.activeElement !== sl) { sl.value = g.s; paintRange(sl); }
@@ -1862,6 +2043,7 @@ $("#wpClose").addEventListener("click", clearSel);
 $("#wpMarks").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
   const mark = b.dataset.mark;
+  if (mark === "section") return splitHere();
   editSel((toks, v) => {
     if (mark === "destaque") {
       // liga: força o destaque; desliga: tira também o destaque que o motor escolheu sozinho
@@ -1919,6 +2101,45 @@ $("#wpColors").addEventListener("change", e => {
   const c = e.target.value.toUpperCase();
   editSel((toks, v) => { toks.forEach(t => { t.p.color = c; }); return spliceText(v, toks.map(t => [t.s, t.e, buildTok(t.p)])); });
 });
+/* copiar / colar formatação: efeitos (destaque, vermelho, elipse, traço, caixa, solo) e cor de uma palavra
+   aplicados em outras. O destaque escolhido pelo estilo também conta (vira destaque marcado). */
+const FMT_FLAGS = ["emph", "noemph", "red", "circle", "underline", "box", "solo"];
+const fmtName = f => {
+  const names = { emph: "destaque", noemph: "sem destaque", red: "vermelho", circle: "elipse", underline: "traço", box: "caixa", solo: "solo" };
+  const l = FMT_FLAGS.filter(x => f.flags.includes(x)).map(x => names[x]);
+  if (f.color) l.push(`cor ${f.color}`);
+  return l.length ? l.join(", ") : "sem efeitos (texto comum)";
+};
+function copyFmt() {
+  const t = selToks()[0]; if (!t) return;
+  const flags = FMT_FLAGS.filter(f => t.p.flags.has(f));
+  if (S.plan.words[S.sel[0]]?.emph && !flags.includes("emph") && !flags.includes("noemph")) flags.push("emph");
+  S.fmt = { flags, color: t.p.color, word: t.p.core };
+  renderPop();
+  toast(`Formatação de “${t.p.core}” copiada: ${fmtName(S.fmt)}. Selecione outras palavras e cole.`);
+}
+function pasteFmt() {
+  const f = S.fmt; if (!f) return;
+  editSel((toks, v) => {
+    for (const t of toks) {
+      for (const x of FMT_FLAGS) t.p.flags.delete(x);
+      for (const x of f.flags) t.p.flags.add(x);
+      if (f.flags.includes("solo")) t.p.flags.delete("break");
+      t.p.color = f.color;
+    }
+    toast(`Formatação colada em ${toks.length === 1 ? "1 palavra" : `${toks.length} palavras`}`, false, { label: "Desfazer", fn: undo });
+    return spliceText(v, toks.map(t => [t.s, t.e, buildTok(t.p)]));
+  });
+}
+$("#wpCopyFmt").addEventListener("click", copyFmt);
+$("#wpPasteFmt").addEventListener("click", pasteFmt);
+document.addEventListener("keydown", e => {
+  if (!e.altKey || e.ctrlKey || e.metaKey || !S.sel.length || $("#wordPop").hidden) return;
+  if (typing()) return;
+  const k = e.key.toLowerCase();
+  if (k === "c") { e.preventDefault(); copyFmt(); }
+  if (k === "v") { e.preventDefault(); pasteFmt(); }
+});
 const pushGroupSize = debounce(v => { const g = groupOf(S.sel[0]); if (g) setGroup(g, { s: v }, `size:${g.g}`); }, 140);
 $("#wpBehindSize").addEventListener("input", e => {
   paintRange(e.target); $("#wpBehindSizeOut").textContent = `${(+e.target.value).toFixed(2)}×`; pushGroupSize(+e.target.value);
@@ -1967,8 +2188,8 @@ $("#btnResetStyle").addEventListener("click", async () => {
   if (!S.cur) return;
   if (!Object.keys(S.overrides).length) return toast("O estilo já está como o original");
   checkpoint();
-  S.overrides = {}; syncControls(); syncEffects();
-  await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { overrides: {} } }); refreshPlan();
+  S.overrides = {}; storeEd(); syncControls(); syncEffects();
+  await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: edBody({ overrides: {} }) }); refreshPlan();
   toast("Estilo restaurado", false, { label: "Desfazer", fn: undo });
 });
 $("#btnSavePreset").addEventListener("click", async () => {
@@ -1978,8 +2199,8 @@ $("#btnSavePreset").addEventListener("click", async () => {
   try {
     const r = await api("/api/presets", { method: "POST", body: { name, description: $("#newPresetDesc").value.trim(), data } });
     checkpoint();
-    await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { preset: r.name } });
-    S.cur.preset = r.name; S.overrides = {};
+    await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: edBody({ preset: r.name }) });
+    S.overrides = {}; setEdPreset(r.name);
     await loadPresets(); refreshPlan();
     $("#newPresetName").value = ""; $("#newPresetDesc").value = "";
     toast(`Estilo “${name || presetTitle(r.name)}” salvo`);
@@ -2040,10 +2261,11 @@ $$("input[name=fmt]").forEach(r => r.addEventListener("change", () => {
 }));
 
 /* ------------------------------------------------------------ abas */
-$$(".tab").forEach(t => t.addEventListener("click", () => {
-  $$(".tab").forEach(x => x.classList.toggle("active", x === t));
-  $$(".pane").forEach(p => p.classList.toggle("active", p.dataset.pane === t.dataset.tab));
-}));
+const openTab = name => {
+  $$(".tab").forEach(x => x.classList.toggle("active", x.dataset.tab === name));
+  $$(".pane").forEach(p => p.classList.toggle("active", p.dataset.pane === name));
+};
+$$(".tab").forEach(t => t.addEventListener("click", () => openTab(t.dataset.tab)));
 
 /* ------------------------------------------------------------ início */
 const MODEL_LABEL = {
@@ -2167,7 +2389,7 @@ $("#chipGpu").addEventListener("click", async () => {
 
 // Site: acha o motor no PC (portas 7860–7869). O primeiro pedido pode abrir a pergunta do navegador
 // sobre "acessar dispositivos da rede local"; enquanto ela estiver aberta, o pedido só espera.
-const ENGINE_API = 1;
+const ENGINE_API = 1;   // mínimo para funcionar; recursos novos olham S.status.api (canSections)
 async function probeEngine() {
   const tries = [];
   for (let port = 7860; port < 7870; port++) {

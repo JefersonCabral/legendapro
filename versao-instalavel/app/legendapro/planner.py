@@ -480,7 +480,8 @@ class Planner:
         k = 0
         while k < len(scenes):
             sc = scenes[k]
-            short = sc["mode"] == "plain" and sc["t_out"] - sc["t_in"] < min_s and len(scenes) > 1
+            # "1 palavra por legenda" é pedido explícito: não junta (a palavra só ganha tempo de leitura)
+            short = sc["mode"] == "plain" and sc["t_out"] - sc["t_in"] < min_s and len(scenes) > 1                 and self.rules.get("chunk_max_words", 2) > 1
             prev = scenes[k - 1] if k > 0 and scenes[k - 1]["mode"] in ("plain", "hero") else None
             nxt = scenes[k + 1] if k + 1 < len(scenes) and scenes[k + 1]["mode"] in ("plain", "hero") else None
             if not short or (prev is None and nxt is None):

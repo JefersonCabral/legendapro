@@ -760,6 +760,16 @@ class Renderer:
             blur += X.get("blur", 0.0) * W * q
         return op, dx, dy, blur, (vx, vy)
 
+    def pop_scale(self, sc, tk, t):
+        """Animação "pop" (effects.anim.<papel>.type = "pop"): a palavra nasce menor (scale_from), passa um
+        pouco do tamanho (overshoot) e assenta em `duration` segundos. 1.0 nos outros tipos."""
+        A = self.fx.get("anim", {}).get(tk["t"].get("anim", "plain"), {})
+        if A.get("type") != "pop":
+            return 1.0
+        u = clamp01((t - max(tk["t"]["t_in"], sc["t_in"])) / max(A.get("duration", 0.22), 1e-3))
+        s0 = A.get("scale_from", 0.55)
+        return s0 + (1 - s0) * ease_out_back(u, A.get("overshoot", 1.9))
+
     def count_text(self, sc, tk, t):
         """Número que conta de 0 até o valor na entrada (effects.count_up), com o layout do valor final."""
         C = self.fx.get("count_up") or {}
@@ -881,7 +891,12 @@ class Renderer:
                 op, dx, dy, blur, (vx, vy) = s
                 spr = self.sprites.get(self.count_text(sc, tk, t), tk["t"]["role"], tk["px"])
                 ax, ay = tk["x"] + dx, tk["base"] + dy
-                x0, y0, mask = warp_mask(spr, ax, ay, 1.0, blur, extra=4 + abs(vx) + abs(vy))
+                z = 1.0 if clip is not None else self.pop_scale(sc, tk, t)
+                if z != 1.0:   # pop: cresce a partir do centro da palavra
+                    m = tk["m"]
+                    cx, cy = ax + m["width"] / 2, ay + (m["top"] + m["bottom"]) / 2
+                    ax, ay = cx - (cx - ax) * z, cy - (cy - ay) * z
+                x0, y0, mask = warp_mask(spr, ax, ay, z, blur, extra=4 + abs(vx) + abs(vy))
                 ml = math.hypot(vx, vy)
                 if ml > 1.2:   # borrão de movimento na direção do deslocamento
                     n = int(ml) | 1
@@ -1336,6 +1351,56 @@ class Renderer:
         return cv.rgb
 
 
+class MultiRenderer:
+    """Vários estilos no mesmo vídeo (blocos do texto divididos por {estilo:id}): um Renderer por bloco,
+    cada um com o próprio estilo, cenas e clarões. Cada bloco vale de t0 até o início do seguinte; na troca
+    de estilo a legenda corta seco (o fim de um bloco nunca se mistura com o começo do outro)."""
+
+    def __init__(self, parts, W, H, alpha=False):
+        self.W, self.H, self.alpha = W, H, alpha
+        self.parts = [(p["t0"], Renderer(p["style"], {"scenes": p["scenes"], "flashes": p["flashes"]}, W, H, alpha))
+                      for p in parts]
+        self.scenes = [sc for _, R in self.parts for sc in R.scenes]
+
+    def __setattr__(self, k, v):
+        if k in ("guard_bg", "matte"):        # funções da prévia/exportação valem para todos os blocos
+            for _, R in self.parts:
+                setattr(R, k, v)
+        object.__setattr__(self, k, v)
+
+    def part_index(self, t):
+        k = 0
+        for i, (t0, _) in enumerate(self.parts):
+            if t >= t0:
+                k = i
+        return k
+
+    def at(self, t):
+        return self.parts[self.part_index(t)][1]
+
+    def frame(self, t, base=None):
+        return self.at(t).frame(t, base)
+
+    def frame_layers(self, t):
+        return self.at(t).frame_layers(t)
+
+    def hits(self, t):
+        return self.at(t).hits(t)
+
+    def gradient_layer(self, k=0):
+        return self.parts[min(max(0, k), len(self.parts) - 1)][1].gradient_layer()
+
+
+def make_renderer(style, plan, W, H, alpha=False):
+    """Renderer do plano: um estilo só, ou um por bloco quando o plano tem divisões de estilo (plan["parts"])."""
+    parts = plan.get("parts") or []
+    if len(parts) > 1:
+        return MultiRenderer(parts, W, H, alpha)
+    if parts:
+        style = parts[0]["style"]
+    return Renderer(style, plan, W, H, alpha)
+
+
 # ---------------------------------------------------------------- vídeo (ffmpeg)
 
 def probe(path):
@@ -1400,7 +1465,7 @@ def _render_video(preset, plan, out, video=None, size=None, fps=30.0, duration=N
         dur = duration or (max(s["t_out"] for s in plan["scenes"]) + 0.6)
     if duration:
         dur = min(dur, duration)
-    R = Renderer(preset, plan, W, H, alpha=alpha and not video)
+    R = make_renderer(preset, plan, W, H, alpha=alpha and not video)
     if matte:
         R.matte = lambda t: matte(t, W, H)
     nframes = int(round(dur * fps))
