@@ -19,6 +19,8 @@ const S = {
   showAdv: false,     // ajustes avançados visíveis na aba Estilo
   uploadPreset: null, // estilo escolhido na tela inicial
   projSearch: "",
+  cuts: [],           // trechos cortados do vídeo [[início, fim]] (segundos do vídeo ORIGINAL)
+  splits: [],         // divisões da lâmina (segundos do vídeo original; só marcam clipes)
 };
 
 /* ------------------------------------------------------------ motor
@@ -135,8 +137,10 @@ function ask({ title, text = "", html = "", ok = "OK", cancel = "Cancelar", dang
    Cada passo guarda texto + estilo + ajustes. Vale para correções, efeitos, cores,
    troca de estilo, sliders e arrastar a legenda. */
 const H = { past: [], future: [], group: null, t: 0 };
-const snap = text => ({ text: text ?? $("#text").value, preset: S.cur?.preset, overrides: structuredClone(S.overrides) });
-const sameSnap = (a, b) => a.text === b.text && a.preset === b.preset && JSON.stringify(a.overrides) === JSON.stringify(b.overrides);
+const snap = text => ({ text: text ?? $("#text").value, preset: S.cur?.preset, overrides: structuredClone(S.overrides),
+  cuts: structuredClone(S.cuts), splits: [...S.splits] });
+const sameSnap = (a, b) => a.text === b.text && a.preset === b.preset && JSON.stringify(a.overrides) === JSON.stringify(b.overrides)
+  && JSON.stringify(a.cuts || []) === JSON.stringify(b.cuts || []) && JSON.stringify(a.splits || []) === JSON.stringify(b.splits || []);
 // group: mudanças seguidas do mesmo controle (arrastar um slider) viram um passo só
 function checkpoint(group = null, text) {
   if (!S.cur) return;
@@ -153,14 +157,17 @@ function syncHistory() {
 async function restore(s) {
   const presetChanged = s.preset !== S.cur.preset;
   S.overrides = structuredClone(s.overrides);
+  S.cuts = structuredClone(s.cuts || []); S.splits = [...(s.splits || [])]; TL.clip = null;
   if (presetChanged) { S.cur.preset = s.preset; S.base = S.presets.find(p => p.name === s.preset) || S.base; }
   clearTimeout(saveTimer);
   $("#text").value = s.text; S.textBefore = s.text; S.dirty = false;
-  try { await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { text: s.text, preset: s.preset, reset_overrides: false, overrides: S.overrides } }); }
+  try { await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { text: s.text, preset: s.preset, reset_overrides: false, overrides: S.overrides,
+                                                                    cuts: S.cuts, splits: S.splits } }); }
   catch (e) { return toast(e.message, true); }
   setSave("salvo", "ok");
   renderPresets(); syncControls(); syncEffects();
-  if (presetChanged) loadProjects();
+  if (presetChanged || JSON.stringify(s.cuts || []) !== JSON.stringify(S.plan?.cuts || [])) loadProjects();
+  drawTimeline(); seek(S.t);   // os cortes podem ter mudado: a agulha sai de trecho cortado
   await refreshPlan();
 }
 let historyBusy = false;
@@ -435,7 +442,7 @@ function renderProjects() {
     const st = { novo: "transcrevendo…", transcrito: "pronto" }[p.status] || p.status;
     el.innerHTML = `<img src="${ENGINE}/api/projects/${p.id}/thumb.jpg" alt="">
       <div><div class="proj-name"></div>
-      <div class="proj-meta">${fmtTime(p.duration).slice(0, 5)} · ${st}</div>
+      <div class="proj-meta">${fmtTime(p.duration - (p.cuts || []).reduce((a, c) => a + c[1] - c[0], 0)).slice(0, 5)} · ${st}</div>
       <div class="proj-meta">${p.created ? fmtDate(p.created) + " · " : ""}${escapeHtml(presetTitle(p.preset))}</div></div>
       <button class="proj-del" title="Apagar projeto" aria-label="Apagar projeto">×</button>`;
     $(".proj-name", el).textContent = p.name;
@@ -453,6 +460,15 @@ async function loadProjects() {
   renderProjects();
 }
 $("#projectSearch").addEventListener("input", e => { S.projSearch = e.target.value; renderProjects(); });
+// painel de projetos recolhível (fica lembrado)
+function setRail(collapsed, save = true) {
+  $(".studio").classList.toggle("rail-collapsed", collapsed);
+  const b = $("#btnRail"), lbl = collapsed ? "Mostrar o painel de projetos" : "Recolher o painel de projetos";
+  b.title = lbl; b.setAttribute("aria-label", lbl); b.setAttribute("aria-expanded", String(!collapsed));
+  if (save) lsSet("lp.railCollapsed", collapsed ? "1" : "0");
+}
+$("#btnRail").addEventListener("click", () => setRail(!$(".studio").classList.contains("rail-collapsed")));
+setRail(lsGet("lp.railCollapsed") === "1", false);
 
 async function deleteProject(p) {
   if (!await ask({ title: `Apagar o projeto “${p.name}”?`, text: "O vídeo original, a transcrição e os vídeos exportados deste projeto serão apagados. Isso não pode ser desfeito.", ok: "Apagar projeto", danger: true })) return;
@@ -471,7 +487,8 @@ function closeProject() {
   $("#inspector").classList.add("disabled");
   $("#player").pause(); $("#player").removeAttribute("src");
   $("#rich").innerHTML = ""; $("#exports").innerHTML = ""; $("#exportDot").hidden = true;
-  $("#tlTrack").innerHTML = ""; $("#tlFlashes").innerHTML = "";
+  $("#tlTrack").innerHTML = ""; $("#tlFlashes").innerHTML = ""; $("#tlClips").innerHTML = ""; $("#tlRuler").innerHTML = "";
+  S.cuts = []; S.splits = []; TL.clip = null; thumbsReset(); syncClipTools();
   try { localStorage.removeItem("lp.last"); } catch {}
   renderProjects();
 }
@@ -500,6 +517,7 @@ async function openProject(id) {
   H.past = []; H.future = []; H.group = null;
   S.base = S.presets.find(x => x.name === p.preset) || S.presets[0];
   S.overrides = p.overrides || {};
+  S.cuts = normCuts(p.cuts || [], p.duration); S.splits = [...(p.splits || [])]; TL.clip = null; TL.pending = 0;
   // "Altura na tela" (layout.anchor_y) saiu da interface: o ajuste antigo vira deslocamento (mesmo efeito)
   const ay = getPath(S.overrides, "layout.anchor_y");
   if (ay !== undefined) {
@@ -512,11 +530,12 @@ async function openProject(id) {
   $("#drop").hidden = true; $("#viewer").hidden = false;
   $("#projectTitleWrap").hidden = false; $("#projectTitle").value = p.name;
   $("#phone").style.aspectRatio = `${p.width} / ${p.height}`;
-  $("#tcDur").textContent = fmtTime(p.duration);
+  $("#tcDur").textContent = fmtTime(editDur());
   $("#text").value = p.text || ""; S.textBefore = $("#text").value; setSave("");
   const pl = $("#player"); pl.pause(); $("#hits").hidden = false; $("#btnPlay").classList.remove("playing");
   if (p.source) { if (pl.getAttribute("src") !== E(p.source)) pl.src = E(p.source); }
   else pl.removeAttribute("src");
+  setZoom(1); drawTimeline(); thumbsStart();
   if (p.source_job && !p.job) watchJob(p.source_job);   // vídeo que o navegador não toca: prepara uma cópia leve
   $("#inspector").classList.toggle("disabled", !p.has_words);
   $("#phoneTip").hidden = !p.has_words || lsGet("lp.tipSeen") === "1";
@@ -659,6 +678,8 @@ async function refreshPlan() {
   catch (e) { if (seq === planSeq) toast(e.message, true); return; }
   if (seq !== planSeq || S.cur?.id !== pid) return;
   S.plan = plan; LV.stale = false;
+  // cortes normalizados pelo servidor (salvo se ainda há um corte local a caminho dele)
+  if (!TL.pending && plan.cuts) { S.cuts = normCuts(plan.cuts, S.cur.duration); S.splits = [...(plan.splits || [])]; }
   S.sel = S.sel.filter(i => i < S.plan.words.length);
   liveSetup(); drawTimeline(); showAt(); livePump(); renderRich(); renderPop(); updateExportBadges(); updateMatte();
   if (pendingGroup && !S.dirty) {   // tamanho/posição de trecho que chegou enquanto o texto mudava
@@ -681,24 +702,136 @@ const LEGEND = [
   [["emph"], "m-emph", "Palavra em destaque", "palavras que o estilo deixou em evidência"],
   [["behind"], "m-behind", "Atrás da pessoa", "legendas com o texto atrás da pessoa"],
 ];
+/* ------------------------------------------------------------ cortes (linha do tempo editada)
+   O <video> toca sempre o arquivo ORIGINAL; a interface mostra a linha do tempo editada (sem os trechos
+   cortados, emendada). S.cuts/S.splits ficam em segundos do original; o resto converte com o2e / e2o. */
+function normCuts(cuts, D) {   // mesmo critério do servidor (norm_cuts)
+  const out = [];
+  for (const c of [...(cuts || [])].map(([a, b]) => [+a, +b]).sort((x, y) => x[0] - y[0] || x[1] - y[1])) {
+    const a = Math.max(0, Math.min(...c)), b = Math.min(D, Math.max(...c));
+    if (b - a < 0.02) continue;
+    if (out.length && a <= out.at(-1)[1] + 1e-3) out.at(-1)[1] = Math.max(out.at(-1)[1], b);
+    else out.push([+a.toFixed(4), +b.toFixed(4)]);
+  }
+  return out;
+}
+const cutLen = cuts => cuts.reduce((s, [a, b]) => s + b - a, 0);
+const editDur = () => Math.max(0.02, (S.cur?.duration || 0) - cutLen(S.cuts));
+// original -> editado (dentro de um corte: o ponto da emenda)
+function o2e(t, cuts = S.cuts) {
+  let off = 0;
+  for (const [a, b] of cuts) { if (t >= b) off += b - a; else if (t > a) return a - off; else break; }
+  return t - off;
+}
+// editado -> original (na emenda, o lado de depois do corte)
+function e2o(te, cuts = S.cuts) {
+  let t = te;
+  for (const [a, b] of cuts) { if (a <= t + 1e-9) t += b - a; else break; }
+  return t;
+}
+const cutAt = t => S.cuts.find(([a, b]) => t >= a - 1e-6 && t < b) || null;
+// último instante que ainda aparece (o fim do último trecho que sobrou)
+const keptEnd = () => { const D = S.cur.duration, c = S.cuts.at(-1); return c && c[1] >= D - 1e-3 ? c[0] : D; };
+// clipes da faixa de vídeo: trechos que sobraram, divididos pela lâmina
+function clips() {
+  if (!S.cur) return [];
+  const D = S.cur.duration, out = [];
+  let a = 0;
+  const kept = [];
+  for (const [ca, cb] of S.cuts) { if (ca > a) kept.push([a, ca]); a = Math.max(a, cb); }
+  if (a < D) kept.push([a, D]);
+  for (const [ka, kb] of kept) {
+    const pts = [ka, ...S.splits.filter(t => t > ka + 0.02 && t < kb - 0.02).sort((x, y) => x - y), kb];
+    for (let i = 0; i + 1 < pts.length; i++) if (pts[i + 1] - pts[i] >= 0.02) out.push({ a: pts[i], b: pts[i + 1] });
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------ linha do tempo: zoom */
+const TL = { zoom: 1, clip: null, pending: 0, drag: null };
+const tlView = () => $("#timeline");
+const maxZoom = () => Math.max(1, editDur() * 600 / Math.max(1, tlView().clientWidth));   // até ~600 px por segundo
+function setZoom(z, clientX = null) {
+  const vp = tlView(), w = vp.clientWidth || 1;
+  z = Math.max(1, Math.min(maxZoom(), z));
+  // ponto que fica parado: o ponteiro (roda do mouse) ou a agulha (botões e teclas), se ela estiver à vista
+  let px;
+  if (clientX != null) px = clientX - vp.getBoundingClientRect().left;
+  else {
+    const hx = S.cur ? o2e(S.t) / editDur() * w * TL.zoom - vp.scrollLeft : -1;
+    px = hx >= 0 && hx <= w ? hx : w / 2;
+  }
+  const frac = (vp.scrollLeft + px) / (w * TL.zoom);
+  TL.zoom = z;
+  $("#tlInner").style.width = `${z * 100}%`;
+  vp.classList.toggle("zoomed", z > 1.001);
+  vp.scrollLeft = frac * w * z - px;
+  $("#tlZoomVal").textContent = z < 9.95 ? `${(Math.round(z * 10) / 10).toString().replace(".", ",")}×` : `${Math.round(z)}×`;
+  $("#btnZoomOut").disabled = z <= 1.001; $("#btnZoomIn").disabled = z >= maxZoom() - 1e-3;
+  drawRuler(); drawThumbsSoon();
+}
+const zoomBy = (f, clientX) => setZoom(TL.zoom * f, clientX);
+$("#btnZoomIn").addEventListener("click", () => zoomBy(1.6));
+$("#btnZoomOut").addEventListener("click", () => zoomBy(1 / 1.6));
+$("#btnZoomFit").addEventListener("click", () => setZoom(1));
+tlView().addEventListener("wheel", e => {
+  if (!S.cur) return;
+  if (e.ctrlKey || e.altKey || e.metaKey) {   // zoom centrado no ponteiro (como no Premiere / CapCut)
+    e.preventDefault();
+    const d = e.deltaY || e.deltaX;
+    zoomBy(Math.exp(-Math.max(-300, Math.min(300, d)) * 0.0022), e.clientX);
+    return;
+  }
+  if (TL.zoom > 1.001 || e.shiftKey) {        // roda sozinha (ou shift) rola na horizontal
+    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (!d) return;
+    e.preventDefault();
+    tlView().scrollLeft += d;
+  }
+}, { passive: false });
+new ResizeObserver(() => { if (S.cur) setZoom(TL.zoom); }).observe(tlView());
+
+// régua com o tempo editado; o passo das marcas acompanha o zoom
+function drawRuler() {
+  const el = $("#tlRuler"); if (!S.cur) { el.innerHTML = ""; return; }
+  const ED = editDur(), pps = tlView().clientWidth * TL.zoom / ED;
+  const step = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300].find(s => s * pps >= 64) || 600;
+  let h = "";
+  for (let k = 0, t = 0; t <= ED + 1e-6 && k < 2000; k++, t = k * step) {
+    const m = Math.floor(t / 60), r = t - m * 60;
+    const lab = step < 1 ? `${m}:${r.toFixed(1).padStart(4, "0")}` : `${m}:${String(Math.round(r)).padStart(2, "0")}`;
+    h += `<i style="left:${t / ED * 100}%">${k ? lab : ""}</i>`;
+  }
+  el.innerHTML = h;
+}
+
 function drawTimeline() {
   const tr = $("#tlTrack"), fl = $("#tlFlashes"); tr.innerHTML = ""; fl.innerHTML = "";
-  if (!S.plan) return;
-  const D = S.cur.duration;
+  if (!S.cur) return;
+  $("#tcDur").textContent = fmtTime(editDur());
+  drawClips(); drawRuler(); syncCutNote();
+  if (!S.plan) return updateHead();
+  const ED = editDur(), X = t => o2e(t) / ED * 100;
   for (const sc of S.plan.scenes) {
     const el = document.createElement("div");
     el.className = `tl-scene ${sc.mode}${sc.behind ? " behind" : ""}${sc.behind && S.plan.live?.matte?.need ? " pending" : ""}`;
-    el.style.left = `${(sc.t_in / D) * 100}%`;
-    el.style.width = `calc(${(Math.max(0.05, sc.t_out - sc.t_in) / D) * 100}% - 1px)`;
+    const l = X(sc.t_in), w = Math.max(0.05 / ED * 100, X(sc.t_out) - l);
+    el.style.left = `${l}%`;
+    el.style.width = `calc(${w}% - 1px)`;
     el.innerHTML = `<span>${escapeHtml(sc.text.replace(/ \/ /g, " "))}</span>`;
     sc._el = el; tr.appendChild(el);
   }
   for (const f of S.plan.flashes) {
-    const el = document.createElement("div"); el.className = "tl-flash"; el.style.left = `${(f / D) * 100}%`; fl.appendChild(el);
+    if (cutAt(f)) continue;
+    const el = document.createElement("div"); el.className = "tl-flash"; el.style.left = `${X(f)}%`; fl.appendChild(el);
   }
-  const emph = S.plan.words.filter(w => w.emph);
+  const emph = S.plan.words.filter(w => w.emph && !w.cut);
   for (const w of emph) {
-    const el = document.createElement("div"); el.className = "tl-emph"; el.style.left = `${(w.start / D) * 100}%`; fl.appendChild(el);
+    const el = document.createElement("div"); el.className = "tl-emph"; el.style.left = `${X(w.start)}%`; fl.appendChild(el);
+  }
+  // emendas (onde saiu um trecho cortado)
+  for (const [a] of S.cuts) {
+    const el = document.createElement("div"); el.className = "tl-join"; el.style.left = `${X(a)}%`; fl.appendChild(el);
   }
   const modes = new Set(S.plan.scenes.map(sc => sc.mode));
   if (S.plan.flashes.length) modes.add("flash");
@@ -706,15 +839,147 @@ function drawTimeline() {
   if (S.plan.scenes.some(sc => sc.behind)) modes.add("behind");
   const leg = LEGEND.filter(([ms]) => ms.some(m => modes.has(m)));
   $("#tlLegend").innerHTML = leg.map(([, cls, l, d]) => `<span title="${d}"><b class="${cls}"></b>${l}</span>`).join("");
+  markRich();
   updateHead();
+}
+
+// faixa de vídeo: um bloco por clipe, com miniaturas do vídeo
+function drawClips() {
+  const box = $("#tlClips"); box.innerHTML = "";
+  if (!S.cur) return;
+  const ED = editDur(), all = clips();
+  if (TL.clip != null && !all.some(c => Math.abs(c.a - TL.clip) < 1e-4)) TL.clip = null;
+  for (const c of all) {
+    const el = document.createElement("div");
+    el.className = "tl-clip" + (TL.clip != null && Math.abs(c.a - TL.clip) < 1e-4 ? " sel" : "");
+    el.dataset.a = c.a; el.dataset.b = c.b;
+    el.style.left = `${o2e(c.a) / ED * 100}%`;
+    el.style.width = `calc(${(c.b - c.a) / ED * 100}% - 2px)`;
+    el.title = `Clipe ${fmtTime(o2e(c.a))} – ${fmtTime(o2e(c.b))} · clique para selecionar, Delete apaga`;
+    el.innerHTML = `<canvas></canvas><span>${(c.b - c.a).toFixed(1).replace(".", ",")} s</span>`;
+    box.appendChild(el);
+  }
+  syncClipTools(); drawThumbsSoon();
+}
+function syncClipTools() {
+  $("#btnCutClip").disabled = TL.clip == null;
+  $("#btnBlade").disabled = !S.cur;
+}
+function syncCutNote() {
+  const el = $("#expCuts"), n = S.cuts.length;
+  el.hidden = !S.cur || !n;
+  if (n) el.textContent = `O vídeo sai com ${fmtTime(editDur())}: ${n === 1 ? "1 trecho cortado" : `${n} trechos cortados`} na linha do tempo (vídeo e áudio).`;
+}
+
+/* miniaturas: um <video> escondido busca alguns quadros, uma vez por projeto */
+const TH = { gen: 0, frames: [], vid: null };
+function thumbsReset() {
+  TH.gen++; TH.frames = [];
+  if (TH.vid) { TH.vid.removeAttribute("src"); TH.vid.load(); TH.vid = null; }
+}
+async function thumbsStart() {
+  thumbsReset();
+  const p = S.cur; if (!p?.source || !p.duration) return;
+  const gen = TH.gen, v = document.createElement("video");
+  v.muted = true; v.preload = "auto"; v.playsInline = true; v.src = E(p.source); TH.vid = v;
+  const wait = (ev, ms = 4000) => new Promise(res => {
+    const done = ok => { clearTimeout(tm); v.removeEventListener(ev, h); v.removeEventListener("error", er); res(ok); };
+    const h = () => done(true), er = () => done(false);
+    const tm = setTimeout(() => done(false), ms);
+    v.addEventListener(ev, h); v.addEventListener("error", er);
+  });
+  if (v.readyState < 1 && !await wait("loadedmetadata", 15000)) return;
+  if (gen !== TH.gen) return;
+  const n = Math.max(6, Math.min(72, Math.ceil(p.duration / 0.4)));
+  const FH = 64, FW = Math.max(16, Math.round(FH * (v.videoWidth || 9) / (v.videoHeight || 16)));
+  // ordem grossa → fina: a faixa já fica legível com as primeiras miniaturas
+  const order = [];
+  for (let st = 8; st >= 1; st >>= 1) for (let i = 0; i < n; i += st) if (!order.includes(i)) order.push(i);
+  for (const [k, i] of order.entries()) {
+    const t = Math.min(p.duration - 0.05, (i + 0.5) / n * p.duration);
+    v.currentTime = t;
+    if (!await wait("seeked")) { if (gen !== TH.gen) return; continue; }
+    if (gen !== TH.gen) return;
+    const c = document.createElement("canvas"); c.width = FW; c.height = FH;
+    try { c.getContext("2d").drawImage(v, 0, 0, FW, FH); } catch { continue; }
+    TH.frames.push({ t, c }); TH.frames.sort((x, y) => x.t - y.t);
+    if (k < 8 || k % 6 === 5) drawThumbsSoon();
+  }
+  drawThumbsSoon();
+  if (gen === TH.gen) { v.removeAttribute("src"); v.load(); TH.vid = null; }
+}
+function drawThumbs() {
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  for (const el of $$("#tlClips .tl-clip")) {
+    const cv = $("canvas", el), w = el.clientWidth, h = el.clientHeight;
+    if (!w || !h) continue;
+    const cw = Math.min(16000, Math.round(w * dpr)), ch = Math.round(h * dpr);
+    if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
+    const ctx = cv.getContext("2d"); ctx.clearRect(0, 0, cw, ch);
+    if (!TH.frames.length) continue;
+    const a = +el.dataset.a, b = +el.dataset.b, f0 = TH.frames[0].c, tw = Math.max(8, ch * f0.width / f0.height);
+    for (let x = 0; x < cw; x += tw) {
+      const t = a + Math.min(1, (x + tw / 2) / cw) * (b - a);
+      let best = TH.frames[0];
+      for (const f of TH.frames) if (Math.abs(f.t - t) < Math.abs(best.t - t)) best = f;
+      ctx.drawImage(best.c, x, 0, tw, ch);
+    }
+  }
+}
+let thumbsRaf = 0;
+const drawThumbsSoon = () => { cancelAnimationFrame(thumbsRaf); thumbsRaf = requestAnimationFrame(drawThumbs); };
+
+/* lâmina e apagar trecho (entram no desfazer como qualquer outra mudança) */
+async function saveCuts(body, msg) {
+  if (!S.cur) return;
+  const pid = S.cur.id;
+  TL.pending++;
+  try { await api(`/api/projects/${pid}`, { method: "PUT", body }); }
+  catch (e) { toast(e.message, true); }
+  finally { TL.pending--; }
+  if (S.cur?.id !== pid) return;
+  if (msg) toast(msg, false, { label: "Desfazer", fn: undo });
+  await refreshPlan();
+  loadProjects();   // a duração na lista de projetos já sai editada
+}
+function blade() {
+  if (!S.cur) return;
+  const t = S.t, c = clips().find(c => t > c.a && t < c.b);
+  if (!c || cutAt(t)) return toast("Ponha a agulha dentro de um clipe para dividir", true);
+  if (t - c.a < 0.05 || c.b - t < 0.05) return toast("Muito perto da ponta do clipe: mova a agulha um pouco", true);
+  checkpoint();
+  S.splits = [...S.splits, +t.toFixed(4)].sort((x, y) => x - y);
+  TL.clip = null; H.group = null;
+  drawClips(); syncHistory();
+  saveCuts({ splits: S.splits }, `Clipe dividido em ${fmtTime(o2e(t))}`);
+}
+function deleteClip() {
+  if (!S.cur || TL.clip == null) return;
+  const all = clips(), c = all.find(c => Math.abs(c.a - TL.clip) < 1e-4);
+  if (!c) { TL.clip = null; return syncClipTools(); }
+  if (all.length < 2) return toast("Não dá para apagar o vídeo inteiro: divida o clipe antes (Ctrl+B)", true);
+  checkpoint();
+  const te = o2e(c.a);
+  S.cuts = normCuts([...S.cuts, [c.a, c.b]], S.cur.duration);
+  TL.clip = null; H.group = null;
+  clearSel();
+  drawTimeline(); syncHistory();
+  seek(e2o(Math.min(te, editDur() - 0.01)));   // a agulha vai para a emenda
+  saveCuts({ cuts: S.cuts }, `Trecho de ${(c.b - c.a).toFixed(1).replace(".", ",")} s apagado`);
+}
+$("#btnBlade").addEventListener("click", blade);
+$("#btnCutClip").addEventListener("click", deleteClip);
+function selectClip(a) {
+  TL.clip = a;
+  for (const el of $$("#tlClips .tl-clip")) el.classList.toggle("sel", a != null && Math.abs(+el.dataset.a - a) < 1e-4);
+  syncClipTools();
 }
 
 function updateHead() {
   if (!S.cur) return;
-  const D = S.cur.duration, f = Math.min(1, S.t / D);
+  const ED = editDur(), te = o2e(S.t), f = Math.min(1, te / ED);
   $("#tlHead").style.left = `calc(${f * 100}% - 1px)`;
-  $("#scrub").value = f;
-  $("#tcNow").textContent = fmtTime(S.t);
+  $("#tcNow").textContent = fmtTime(te);
   let now = null;
   for (const sc of S.plan?.scenes || []) {
     const on = S.t >= sc.t_in && S.t < sc.t_out;
@@ -722,6 +987,12 @@ function updateHead() {
     if (on) now = sc;
   }
   $("#sceneNow").innerHTML = now ? `<b>${MODE_NAMES[now.mode] || now.mode}</b>${escapeHtml(now.text)}` : "";
+  // com zoom: a linha do tempo acompanha a agulha quando ela sai da área visível
+  const vp = tlView();
+  if (TL.zoom > 1.001 && !TL.drag) {
+    const w = vp.clientWidth, x = f * w * TL.zoom;
+    if (x < vp.scrollLeft || x > vp.scrollLeft + w - 8) vp.scrollLeft = !$("#player").paused ? x - w * 0.08 : x - w / 2;
+  }
   markRichNow();
 }
 
@@ -935,9 +1206,15 @@ function showAt() {
   if (S.plan) fetchHitsSoon(S.t);
 }
 
+// t em segundos do vídeo ORIGINAL; dentro de um trecho cortado, vai para a emenda
 function seek(t) {
   if (!S.cur) return;
-  S.t = Math.max(0, Math.min(S.cur.duration - 0.01, t));
+  const end = keptEnd();
+  t = Math.max(0, Math.min(end - 0.01, t));
+  const c = cutAt(t);
+  if (c) t = c[1] >= end - 1e-3 ? Math.max(0, c[0] - 0.01) : c[1];
+  if (cutAt(t)) t = e2o(0);   // tudo antes foi cortado
+  S.t = t;
   const pl = $("#player");
   if (!pl.paused) pl.pause();
   if (pl.readyState >= 1) {
@@ -948,15 +1225,37 @@ function seek(t) {
   armVideoFrame();
   updateHead(); showAt();
 }
-$("#scrub").addEventListener("input", e => seek(+e.target.value * S.cur.duration));
-// clique (sem arrastar) numa legenda da linha do tempo seleciona as palavras dela;
-// shift+clique seleciona um intervalo de legendas, ctrl+clique soma ou tira legendas
-let tlDown = null;
-$("#scrub").addEventListener("pointerdown", e => { tlDown = { x: e.clientX, y: e.clientY }; });
-$("#scrub").addEventListener("pointerup", e => {
-  const d = tlDown; tlDown = null;
-  if (!d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4 || !S.plan) return;
-  const r = $("#scrub").getBoundingClientRect(), t = (e.clientX - r.left) / r.width * S.cur.duration;
+// busca no tempo EDITADO (o que a linha do tempo e o relógio mostram)
+const seekE = te => seek(e2o(Math.max(0, Math.min(editDur() - 0.01, te))));
+const frameStep = () => 1 / (S.cur?.fps || 30);
+
+/* linha do tempo: arrastar move a agulha; clique numa legenda seleciona as palavras dela
+   (shift = intervalo, ctrl = soma/tira); clique num clipe da faixa de vídeo seleciona o clipe */
+const xToE = clientX => { const r = $("#tlInner").getBoundingClientRect(); return Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * editDur(); };
+$("#tlInner").addEventListener("pointerdown", e => {
+  if (!S.cur || e.button !== 0) return;
+  const clip = e.target.closest(".tl-clip");
+  TL.drag = { x: e.clientX, y: e.clientY, clip: clip ? +clip.dataset.a : null, moved: false, id: e.pointerId };
+  $("#tlInner").setPointerCapture(e.pointerId);
+  if (!clip) seekE(xToE(e.clientX));   // régua / legendas: a agulha vai direto para o ponto
+});
+$("#tlInner").addEventListener("pointermove", e => {
+  const d = TL.drag; if (!d || d.id !== e.pointerId) return;
+  if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) d.moved = true;
+  if (!d.moved) return;
+  seekE(xToE(e.clientX));
+  // arrastando com zoom: rola quando a agulha chega na borda
+  const vp = tlView(), r = vp.getBoundingClientRect();
+  if (TL.zoom > 1.001) { if (e.clientX > r.right - 24) vp.scrollLeft += 18; else if (e.clientX < r.left + 24) vp.scrollLeft -= 18; }
+});
+const tlUp = e => {
+  const d = TL.drag; if (!d || d.id !== e.pointerId) return;
+  TL.drag = null;
+  if (d.moved || e.type === "pointercancel" || !S.cur) return;
+  if (d.clip != null) { selectClip(TL.clip != null && Math.abs(TL.clip - d.clip) < 1e-4 && (e.ctrlKey || e.metaKey) ? null : d.clip); return; }
+  selectClip(null);
+  if (!S.plan) return;
+  const t = e2o(xToE(e.clientX));
   const sc = S.plan.scenes.find(s => t >= s.t_in && t < s.t_out && s.wi?.length);
   if (!sc) return clearSel();
   let sel;
@@ -973,16 +1272,32 @@ $("#scrub").addEventListener("pointerup", e => {
   if (!S.sel.length) return clearSel();
   hideTip(); markRich(); renderPop();
   $(`#rich .w[data-wi="${S.sel[0]}"]`)?.scrollIntoView({ block: "nearest" });
-});
-$("#btnPrev").addEventListener("click", () => seek(S.t - 1 / (S.cur?.fps || 30)));
-$("#btnNext").addEventListener("click", () => seek(S.t + 1 / (S.cur?.fps || 30)));
+};
+$("#tlInner").addEventListener("pointerup", tlUp);
+$("#tlInner").addEventListener("pointercancel", tlUp);
+$("#btnPrev").addEventListener("click", () => seekE(o2e(S.t) - frameStep()));
+$("#btnNext").addEventListener("click", () => seekE(o2e(S.t) + frameStep()));
 
-// tocando: a cada quadro do vídeo, desenha a legenda do mesmo instante
+// tocando: pula os trechos cortados (um pouco antes de entrar neles, para não piscar o quadro cortado)
+function skipCuts(t) {
+  const pl = $("#player");
+  if (pl.paused || !S.cuts.length || !S.cur) return false;
+  const ahead = 1.2 / (S.cur.fps || 30);
+  const c = S.cuts.find(([a, b]) => t + ahead >= a && t < b);
+  if (!c) return false;
+  if (c[1] >= S.cur.duration - 1e-3) { reachEnd(); return true; }
+  pl.currentTime = c[1];
+  return true;
+}
+// fim do último trecho: para (como no fim do vídeo)
+function reachEnd() { const pl = $("#player"); pl.pause(); seek(firstCaptionTime()); }
+
 // cada quadro que o vídeo apresenta (tocando ou depois de uma busca): legenda e recorte do MESMO quadro
 function onVideoFrame(now, md) {
   LV.vfc = false;
   const pl = $("#player");
   LV.vt = md?.mediaTime ?? pl.currentTime;
+  if (skipCuts(LV.vt)) { if (!pl.paused) nextVideoFrame(); return; }
   const i = frameAt(LV.vt);
   if (!pl.paused) { S.t = LV.vt; updateHead(); }
   liveDraw(i); paintPerson(); liveDecodeAhead(i); livePump();
@@ -1000,7 +1315,8 @@ async function togglePlay() {
   const pl = $("#player");
   if (!pl.paused) { pl.pause(); return; }
   if (S.dirty) await saveNow();
-  if (S.t >= S.cur.duration - 0.1) seek(0);
+  if (o2e(S.t) >= editDur() - 0.1) seekE(0);
+  else if (cutAt(S.t)) seek(S.t);
   clearSel(); $("#hits").hidden = true;
   try { await pl.play(); } catch (e) { $("#hits").hidden = false; return toast("Não consegui tocar o vídeo: " + e.message, true); }
   $("#btnPlay").classList.add("playing");
@@ -1012,6 +1328,7 @@ $("#player").addEventListener("pause", e => {
   S.t = e.target.currentTime; $("#btnPlay").classList.remove("playing"); $("#hits").hidden = false;
   updateHead(); showAt(); renderPop();
 });
+$("#player").addEventListener("timeupdate", e => skipCuts(e.target.currentTime));   // reserva (sem requestVideoFrameCallback)
 $("#player").addEventListener("ended", () => seek(firstCaptionTime()));
 $("#player").addEventListener("seeked", () => {
   const pl = $("#player");
@@ -1030,6 +1347,7 @@ const HELP = `
         <li><b>Clique numa palavra</b> no vídeo ou no texto para corrigir, mudar a cor ou pôr efeito.</li>
         <li><b>Arraste uma palavra</b> no vídeo para mover a legenda inteira.</li>
         <li><b>Texto atrás da pessoa:</b> clique nas legendas na linha do tempo (shift ou ctrl para várias) e use “Atrás da pessoa” no menu. O vídeo é recortado só nesses trechos; arraste a palavra para posicionar cada trecho e ajuste o tamanho no menu.</li>
+        <li><b>Cortar o vídeo:</b> ponha a agulha onde quer dividir e aperte <kbd>Ctrl</kbd>+<kbd>B</kbd> (ou a tesoura). Clique no clipe na faixa de vídeo e aperte <kbd>Delete</kbd>: o trecho sai (vídeo, áudio e legenda) e o resto se junta. A exportação já sai cortada.</li>
         <li>Na aba <b>Estilo</b>, escolha o visual (passe o mouse para ver animado) e ajuste tamanho, cores e fontes.</li>
         <li>Dê <b>play</b> para ver em movimento e <b>exporte</b> quando estiver pronto.</li>
       </ol>
@@ -1037,12 +1355,17 @@ const HELP = `
     <section>
       <h4>Atalhos</h4>
       <table>
-        <tr><td><kbd>Espaço</kbd></td><td>tocar / pausar</td></tr>
+        <tr><td><kbd>Espaço</kbd></td><td>tocar / pausar (em qualquer lugar fora dos campos de texto)</td></tr>
         <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>quadro anterior / próximo</td></tr>
         <tr><td><kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd></td><td>voltar / avançar 1 segundo</td></tr>
+        <tr><td><kbd>Ctrl</kbd> + <kbd>B</kbd> ou <kbd>K</kbd></td><td>dividir o clipe na agulha (lâmina)</td></tr>
+        <tr><td><kbd>Delete</kbd> / <kbd>⌫</kbd></td><td>apagar o clipe selecionado (o resto se junta)</td></tr>
+        <tr><td><kbd>Ctrl</kbd> ou <kbd>Alt</kbd> + roda</td><td>zoom na linha do tempo</td></tr>
+        <tr><td><kbd>+</kbd> <kbd>−</kbd></td><td>aumentar / diminuir o zoom</td></tr>
+        <tr><td>Roda ou <kbd>Shift</kbd> + roda</td><td>rolar a linha do tempo (com zoom)</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>Z</kbd></td><td>desfazer</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd></td><td>refazer</td></tr>
-        <tr><td><kbd>Esc</kbd></td><td>fechar o menu da palavra</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>fechar o menu da palavra / soltar o clipe</td></tr>
         <tr><td><kbd>Shift</kbd> + clique</td><td>selecionar um trecho</td></tr>
         <tr><td><kbd>Ctrl</kbd> + clique</td><td>somar palavras à seleção</td></tr>
         <tr><td><kbd>?</kbd></td><td>esta ajuda</td></tr>
@@ -1052,21 +1375,37 @@ const HELP = `
 const showHelp = () => ask({ title: "Atalhos e ajuda", html: HELP, ok: "Fechar", cancel: null, wide: true });
 $("#btnHelp").addEventListener("click", showHelp);
 
+// foco num campo de texto (lá as teclas são do campo, não atalhos)
+const typing = () => { const a = document.activeElement; return !!a && (["TEXTAREA", "INPUT", "SELECT"].includes(a.tagName) || a.isContentEditable); };
 window.addEventListener("keydown", e => {
-  if (!$("#modal").hidden) return;
-  if (["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement?.tagName)) return;
+  if (!$("#modal").hidden || typing()) return;
   if (e.key === "?") { e.preventDefault(); showHelp(); return; }
+  // espaço: tocar / pausar em qualquer lugar da tela (e nunca "clicar" o último botão focado)
+  if (e.code === "Space") {
+    e.preventDefault();
+    if (e.repeat) return;
+    const a = document.activeElement; if (a && a !== document.body) a.blur();
+    togglePlay(); return;
+  }
   if (!S.cur) return;
-  if (e.code === "Escape") { clearSel(); return; }
-  if ((e.ctrlKey || e.metaKey) && (e.code === "KeyZ" || e.code === "KeyY")) {
+  if (e.code === "Escape") { clearSel(); selectClip(null); return; }
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && (e.code === "KeyZ" || e.code === "KeyY")) {
     e.preventDefault();
     if (e.code === "KeyY" || e.shiftKey) redo(); else undo();
     return;
   }
-  if (e.code === "Space") { e.preventDefault(); if (document.activeElement?.tagName === "BUTTON") document.activeElement.blur(); togglePlay(); }
-  if (e.code === "ArrowLeft") { e.preventDefault(); seek(S.t - (e.shiftKey ? 1 : 1 / (S.cur.fps || 30))); }
-  if (e.code === "ArrowRight") { e.preventDefault(); seek(S.t + (e.shiftKey ? 1 : 1 / (S.cur.fps || 30))); }
+  if (mod && !e.shiftKey && !e.altKey && (e.code === "KeyB" || e.code === "KeyK")) { e.preventDefault(); blade(); return; }
+  if (!mod && (e.code === "Delete" || e.code === "Backspace")) { if (TL.clip != null) { e.preventDefault(); deleteClip(); } return; }
+  if (!mod && !e.altKey) {
+    if (e.key === "=" || e.key === "+" || e.code === "NumpadAdd") { e.preventDefault(); zoomBy(1.6); return; }
+    if (e.key === "-" || e.code === "NumpadSubtract") { e.preventDefault(); zoomBy(1 / 1.6); return; }
+  }
+  if (e.code === "ArrowLeft") { e.preventDefault(); seekE(o2e(S.t) - (e.shiftKey ? 1 : frameStep())); }
+  if (e.code === "ArrowRight") { e.preventDefault(); seekE(o2e(S.t) + (e.shiftKey ? 1 : frameStep())); }
 });
+// o espaço solto em cima de um botão também não pode acioná-lo
+window.addEventListener("keyup", e => { if (e.code === "Space" && $("#modal").hidden && !typing()) e.preventDefault(); });
 
 /* ------------------------------------------------------------ texto */
 const setSave = (txt, cls = "") => { const el = $("#saveState"); el.textContent = txt; el.className = "save-state " + cls; };
@@ -1198,10 +1537,11 @@ function renderRich() {
     for (const f of ["emph", "red", "circle", "underline", "box", "solo", "noemph"]) if (p.flags.has(f)) cls.push(`f-${f}`);
     if (w.emph && !p.flags.has("emph")) cls.push("f-auto");
     if (w.bg != null) cls.push("f-behind");
+    if (w.cut) cls.push("f-cut");
     if (S.sel.includes(i)) cls.push("sel");
     let style = "";
     if (p.color) { style = ` style="--wc:${p.color}"`; cls.push("f-color"); if (lum(p.color) < 70) cls.push("f-dark"); }
-    out += `<span class="${cls.join(" ")}" data-wi="${i}"${style}>${escapeHtml(p.core + p.tail)}</span>`;
+    out += `<span class="${cls.join(" ")}" data-wi="${i}"${style}${w.cut ? ' title="Trecho cortado do vídeo: esta palavra não aparece"' : ""}>${escapeHtml(p.core + p.tail)}</span>`;
     pos = e;
   }
   out += gap(v.slice(pos));
@@ -1733,6 +2073,98 @@ function showHardware() {
   }
 }
 
+/* ------------------------------------------------------------ atualização do motor
+   O motor procura versão nova sozinho (latest.json assinado na Release do GitHub), baixa e confere. Aqui só
+   aparece o aviso no topo e a janela "Este computador" (clicar no chip GPU). Motor antigo, sem atualizador
+   (1.0.0 a 1.0.3): no site, compara a versão dele com a publicada no config.js e oferece o download. */
+const U = { st: null, timer: null };
+const vnum = v => String(v || "0").split(".").map(n => parseInt(n, 10) || 0);
+const vnewer = (a, b) => {
+  const x = vnum(a), y = vnum(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+};
+const isMac = () => /Mac/i.test(`${navigator.userAgentData?.platform || navigator.platform || ""} ${navigator.userAgent}`);
+function downloadUrl() {
+  const cfg = window.LEGENDAPRO || {};
+  return (isMac() && cfg.DOWNLOAD_URL_MAC) || cfg.DOWNLOAD_URL || "https://legendapro.pages.dev/";
+}
+function updLine(st) {
+  switch (st?.state) {
+    case "uptodate": return "Você está na versão mais nova.";
+    case "available": return `A versão ${st.latest} está disponível.`;
+    case "downloading": return `Baixando a versão ${st.latest}…`;
+    case "ready": return `A versão ${st.latest} está pronta para instalar.`;
+    case "checking": return "Procurando atualizações…";
+    case "failed": return st.message;
+    case "error": return st.message;
+    default: return "Ainda não procurou atualizações.";
+  }
+}
+async function updRefresh(check = false) {
+  clearTimeout(U.timer);
+  try { U.st = await api(check ? "/api/update/check" : "/api/update", check ? { method: "POST" } : {}); }
+  catch { U.st = null; }            // motor sem atualizador, ou fechado
+  updRender();
+  U.timer = setTimeout(updRefresh, ["checking", "downloading"].includes(U.st?.state) ? 2000 : 60000);
+}
+function updRender() {
+  const b = $("#updBadge"), st = U.st, cfg = window.LEGENDAPRO || {};
+  b.hidden = true; b.classList.remove("busy"); b.onclick = null;
+  const show = (text, onclick) => { b.hidden = false; b.textContent = text; b.onclick = onclick || null; b.classList.toggle("busy", !onclick); };
+  if (!st) {
+    if (!LOCAL_UI && cfg.VERSION && vnewer(cfg.VERSION, S.status?.version))
+      show(`Versão ${cfg.VERSION} disponível · Baixar`, () => window.open(downloadUrl(), "_blank"));
+    return;
+  }
+  if (st.state === "downloading") show(`Baixando a versão ${st.latest} · ${Math.round((st.progress || 0) * 100)}%`);
+  else if (st.state === "installing") show("Instalando a atualização…");
+  else if (st.state === "ready") show(`Versão ${st.latest} pronta · Atualizar agora`, updInstall);
+  else if (st.state === "available" && st.installable && st.signed)
+    show(`Versão ${st.latest} disponível · Baixar e instalar`, async () => {
+      U.st = await api("/api/update/download", { method: "POST" }); updRefresh();
+    });
+  else if (st.state === "available")
+    show(`Versão ${st.latest} disponível · Baixar`, () => window.open(st.download_url || downloadUrl(), "_blank"));
+}
+async function updInstall() {
+  const v = U.st.latest;
+  if (!await ask({ title: `Atualizar para a versão ${v}?`, ok: "Atualizar agora",
+    text: "O LegendaPRO fecha, instala a versão nova e abre de novo sozinho, em cerca de 1 minuto. Seus projetos e estilos continuam onde estão." })) return;
+  try { await api("/api/update/install", { method: "POST" }); } catch (e) { return toast(e.message, true); }
+  // espera a versão nova responder (a página do site recarrega; a local vai para a porta nova)
+  engineLostShown = true;
+  $("#gateTitle").textContent = `Atualizando para a versão ${v}…`;
+  $("#gate .gate-card > p").textContent = "Isso leva cerca de 1 minuto. A página continua sozinha quando o LegendaPRO abrir de novo.";
+  $("#gate .gate-steps").hidden = true; $("#gate .gate-actions").hidden = true;
+  $("#gateWait").hidden = false; $("#gateWait").textContent = "instalando…";
+  $("#gate").hidden = false;
+  const t0 = Date.now();
+  const again = async () => {
+    const f = await probeEngine();
+    if (f && !vnewer(v, f.status.version)) return LOCAL_UI ? location.assign(f.base + "/") : location.reload();
+    if (Date.now() - t0 > 4 * 60000) $("#gateWait").textContent = "está demorando mais que o normal: abra o LegendaPRO pelo atalho";
+    setTimeout(again, 2000);
+  };
+  setTimeout(again, 5000);
+}
+$("#chipGpu").addEventListener("click", async () => {
+  const hw = S.status?.hw || {}, st = U.st;
+  const li = (k, v) => `<li>${k}: <b>${escapeHtml(v || "?")}</b></li>`;
+  const html = `<ul class="hw-list">${li("Versão do motor", S.status?.version)}${li("Placa de vídeo", (hw.gpus || []).join(", ") || "nenhuma")}${li("Processador", hw.cpu)}${li("Transcrição", hw.whisper)}${li("Exportação", hw.encoder)}${li("Recorte da pessoa", hw.matte)}</ul>` +
+    (st ? `<label class="upd-row"><input type="checkbox" id="updAuto"${st.auto ? " checked" : ""}> Atualizar automaticamente</label>
+           <p class="upd-note">${escapeHtml(updLine(st))}${st.installable ? "" : " Esta cópia (portátil ou de desenvolvimento) não se instala sozinha: baixe a versão nova pelo site."}</p>`
+        : `<p class="upd-note">Este motor é de uma versão sem atualização automática. Baixe a versão nova pelo site uma vez; depois ela se atualiza sozinha.</p>`);
+  const res = ask({ title: "Este computador", html, ok: st ? "Procurar atualizações" : "Fechar", cancel: st ? "Fechar" : null });
+  $("#updAuto")?.addEventListener("change", e =>
+    api("/api/update", { method: "PUT", body: { auto: e.target.checked } }).then(r => { U.st = r; updRender(); }).catch(err => toast(err.message, true)));
+  if (await res && st) {
+    await updRefresh(true);
+    for (let i = 0; i < 20 && U.st?.state === "checking"; i++) { await new Promise(r => setTimeout(r, 500)); await updRefresh(); }
+    toast(updLine(U.st), U.st?.state === "error");
+  }
+});
+
 // Site: acha o motor no PC (portas 7860–7869). O primeiro pedido pode abrir a pergunta do navegador
 // sobre "acessar dispositivos da rede local"; enquanto ela estiver aberta, o pedido só espera.
 const ENGINE_API = 1;
@@ -1806,6 +2238,7 @@ async function connectEngine() {
   try {
     S.status = await connectEngine();
     showHardware();
+    updRefresh();
     const mopts = S.status.models.map(m => `<option value="${m}"${m === S.status.default_model ? " selected" : ""}>${MODEL_LABEL[m] || m}</option>`).join("");
     $("#uploadModel").innerHTML = mopts; $("#retransModel").innerHTML = mopts;
     await loadPresets();

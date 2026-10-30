@@ -9,3 +9,4 @@ av==18.0.0                     # o faster-whisper 1.2.1 usa uma opção que a av
 onnxruntime==1.23.2
 rumps==0.4.0
 pyobjc-framework-Cocoa==12.2.2
+cryptography==47.0.0          # atualização automática (assinatura do latest.json)

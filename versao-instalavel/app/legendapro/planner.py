@@ -9,6 +9,7 @@ Modos de cena:
 import random
 import re
 import zlib
+from dataclasses import replace
 
 from . import nlp_pt as L
 from .transcript import normalize, word_color
@@ -859,9 +860,24 @@ class Planner:
         return sc
 
     def plan(self, words):
+        # Destaque marcado à mão numa oração que já tinha destaque automático: os dois ficam em destaque.
+        # O motor faz um destaque por trecho e a marcação vencia o automático, que "sumia" (voltava a texto
+        # comum). Planeja sem as marcações, vê quais destaques automáticos se perderiam e marca esses também
+        # (o split_forced dá um trecho para cada). Destaque desligado à mão ({-}, "noemph") continua desligado.
+        if any("emph" in w.flags for w in words):
+            auto = self.heroes(self._plan([replace(w, flags=set(w.flags) - {"emph"}) for w in words]))
+            lost = {i for i in auto - self.heroes(self._plan(words)) if "noemph" not in words[i].flags}
+            if lost:
+                words = [replace(w, flags=set(w.flags) | {"emph"}) if i in lost else w for i, w in enumerate(words)]
         out = self._plan(words)
         self.mark_behind(words, out)
         return out
+
+    @staticmethod
+    def heroes(plan):
+        """Índices das palavras que viraram destaque (herói, ou a serifada de ênfase da pilha)."""
+        return {t["wi"] for sc in plan["scenes"] for l in sc["lines"] for t in l["tokens"]
+                if t.get("wi", -1) >= 0 and (t.get("anim") == "hero" or (t["role"] == "serif" and sc["mode"] == "stack"))}
 
     def mark_behind(self, words, plan):
         """Cenas com palavras de um trecho {atras}: ficam atrás da pessoa (recorte do vídeo), com a

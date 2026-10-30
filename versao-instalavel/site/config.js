@@ -11,7 +11,7 @@
 // (a Release é criada sozinha pelo GitHub Actions quando sai uma tag v*).
 const RELEASES = "https://github.com/JefersonCabral/legendapro/releases/latest/download";
 const DOWNLOAD_URL = RELEASES + "/LegendaPRO-Setup.exe";
-const VERSION = "1.0.3";
+const VERSION = "1.1.0";
 const SIZE_MB = 178;
 
 /* Mac: os .dmg vão para a mesma Release. Deixar vazio volta o site para "Versão para Mac em breve". */

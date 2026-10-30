@@ -141,3 +141,25 @@ jobs:
         with:
           body_path: versao-instalavel/NOTAS-DA-VERSAO.md
           files: versao-instalavel/dist-mac/LegendaPRO-mac-${{ matrix.arch }}.dmg
+
+  # latest.json da atualização automática: tamanho e SHA-256 de cada instalador, assinado com o segredo
+  # LEGENDAPRO_UPDATE_KEY (sem ele sai sem assinatura e o motor só avisa, sem instalar sozinho)
+  manifesto:
+    needs: [windows, mac]
+    if: always() && startsWith(github.ref, 'refs/tags/v') && needs.windows.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: instaladores
+      - name: Montar e assinar o latest.json
+        env:
+          LEGENDAPRO_UPDATE_KEY: ${{ secrets.LEGENDAPRO_UPDATE_KEY }}
+        run: |
+          pip install --quiet cryptography==47.0.0
+          python versao-instalavel/build/make_manifest.py --version "${GITHUB_REF_NAME#v}" --dir instaladores --out latest.json
+      - name: Anexar na Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: latest.json

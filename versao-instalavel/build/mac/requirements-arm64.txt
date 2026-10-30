@@ -16,3 +16,4 @@ tiktoken
 more-itertools
 rumps==0.4.0                   # ícone na barra de menu
 pyobjc-framework-Cocoa==12.2.2
+cryptography==47.0.0          # atualização automática (assinatura do latest.json)

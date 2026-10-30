@@ -226,6 +226,26 @@ Pedido do dono: deixar a ferramenta "online", com o processamento no PC de quem 
   - **Correção:** `setdefault` em `Sprites.get` e a chave do brilho passa a ser a chave do sprite.
   - **O original (`legendapro/render.py`) ainda tem o bug.** O dono pediu para não mexer nele; aplicar lá quando ele autorizar.
 - **Comparação original × online (out/2026):** vídeos exportados idênticos pixel a pixel nos 11 presets; prévia no navegador igual (mesma lógica e mesmo ritmo); `anim.mp4` dos cartões idênticos byte a byte. Scripts em `cmp/` na pasta temporária da sessão.
+- **Atualização automática (v1.1.0):**
+  - **Publicação:** `updater.py` lê o `latest.json` da Release. O arquivo é gerado por `build/make_manifest.py` no job `manifesto` do `motor.yml` e assinado com Ed25519.
+  - **Chaves:** a pública está no código; a privada fica em `%USERPROFILE%\.legendapro\chave-atualizacao-PRIVADA.txt` e tem que estar no segredo **`LEGENDAPRO_UPDATE_KEY`** do GitHub. Sem ele, o manifesto sai sem assinatura e o motor só avisa, sem instalar sozinho.
+  - **Quando instala:** baixa e confere o SHA-256. Instala no "Atualizar agora" (nunca com trabalho rodando) ou sozinho ao abrir.
+  - **Ajudante do Windows (`atualizar.ps1`):** copia a pasta com robocopy para `.anterior`, instala com o Inno em `/VERYSILENT`, reabre na mesma porta e confere a versão. Se a nova não responder, copia a anterior de volta e marca `falhou-<v>`.
+    - Renomear a pasta falhava sempre que algo estava com ela aberta, então passou a ser cópia.
+    - Com DETACHED_PROCESS o PowerShell não inicia; usar CREATE_NO_WINDOW.
+    - O registro do ajudante fica fora da pasta da versão, porque o `cleanup` do motor novo apaga essa pasta.
+  - **Ajudante do Mac (`atualizar.sh`):** troca o `.app` e reabre por `open -a <app> legendapro://atualizado`. **Ainda não foi testado num Mac.**
+  - **Interface:** aviso no topo e janela "Este computador" (clique no chip GPU).
+  - **Motores 1.0.x** (sem atualizador): o site oferece o download.
+  - **Testado no Windows** com instaladores "LegendaPRO Teste" (outro AppId, `/DSemProtocolo`, pasta curta em `%LOCALAPPDATA%\LPTeste`; o caminho longo da pasta temporária estoura os 260 caracteres): 8.0.0→8.0.1, 8.0.2→8.0.3 (ao abrir) e volta automática com versão quebrada.
+- **Corte de vídeo (v1.1.0):**
+  - **Dados:** `meta.cuts` são os trechos apagados, em segundos do vídeo original; `meta.splits` são as divisões da lâmina. O servidor normaliza os dois.
+  - **Plano:** as palavras dentro de cortes saem da legenda. Os `wi` continuam apontando para o texto inteiro, e `words[i].cut` vem marcado.
+  - **Exportação:** pula os quadros e usa `aselect` no áudio.
+  - **Interface:** linha do tempo editada com zoom (Ctrl/Alt + roda), faixa de clipes com miniaturas, Ctrl+B/K e Delete; o play pula os cortes.
+- **Destaques (v1.1.0):**
+  - **Dois destaques na mesma oração:** antes, marcar uma palavra derrubava o destaque automático da oração. Agora `Planner.plan` planeja sem as marcações e re-marca os destaques automáticos que se perderiam.
+  - **Cor:** o brilho e os raios seguem a cor escolhida na palavra (`user_color`).
 - **PC sem placa:** `LEGENDAPRO_FORCE_CPU=1` simula. Testado com vídeo real: transcrição, recorte e x264 corretos.
 
 ## Vídeos já processados

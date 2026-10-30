@@ -112,3 +112,36 @@ navegador ── https://<seu-site>/app/ ──► Cloudflare Pages (só HTML/JS
 - **Licença:** o RVM é GPL-3.0, então distribuir com ele obriga a GPL e o código aberto. O ffmpeg do pacote é GPL
   (build gyan.dev "essentials"), com a licença em `app\bin`.
 - **Assinatura do `.exe`:** sem certificado, o Windows mostra o aviso do SmartScreen.
+
+## Atualização automática (desde a 1.1.0)
+
+- **Onde procura:** o motor consulta `releases/latest/download/latest.json` ao abrir e a cada 6 h.
+- **Quem gera o `latest.json`:** o job `manifesto` do GitHub Actions, com a versão, os links, o tamanho e o
+  SHA-256 de cada instalador, assinado com Ed25519.
+- **Quando instala:** com a assinatura válida, baixa em segundo plano, confere o arquivo e instala quando a pessoa
+  clica em "Atualizar agora", ou sozinho na próxima vez que o programa abrir. Nunca no meio de um trabalho.
+- **Ajudante de instalação** (`app/legendapro/atualizar.ps1` no Windows, `atualizar.sh` no Mac):
+  1. guarda uma cópia da versão atual;
+  2. instala a nova;
+  3. reabre o programa;
+  4. confere se ele responde com a versão nova. Se não responder em 2 minutos, volta a anterior, e a versão que
+     falhou não é oferecida de novo.
+- **Segredo obrigatório:** no GitHub, **Settings → Secrets and variables → Actions → New repository secret**,
+  nome **`LEGENDAPRO_UPDATE_KEY`**, com o conteúdo de `%USERPROFILE%\.legendapro\chave-atualizacao-PRIVADA.txt`.
+  - Guarde esse arquivo com cuidado: quem tiver a chave consegue publicar atualizações.
+  - Sem o segredo, o `latest.json` sai sem assinatura e o motor só avisa da versão nova, sem instalar sozinho.
+- **Motores 1.0.x** não têm o atualizador: o site oferece o download da versão nova.
+- **Como testar sem mexer na instalação de verdade:**
+  - gere instaladores com `iscc /DAppName="LegendaPRO Teste" /DAppId={{outro-guid}} /DSemProtocolo=1`;
+  - instale numa pasta curta (o limite de 260 caracteres do Windows conta);
+  - aponte `LEGENDAPRO_UPDATE_URL` para um `latest.json` local.
+
+## Corte do vídeo (desde a 1.1.0)
+
+- **Na linha do tempo:**
+  - Ctrl+B ou Ctrl+K (ou a tesoura) divide o clipe na agulha;
+  - clicar no clipe e apertar Delete apaga o trecho, e o resto se junta;
+  - zoom com Ctrl ou Alt + roda.
+- **O vídeo original não é alterado.** Os cortes ficam em `meta.json` (`cuts`, `splits`).
+- **No plano:** as palavras dos trechos cortados saem da legenda.
+- **Na exportação:** os quadros e o áudio desses trechos ficam de fora.

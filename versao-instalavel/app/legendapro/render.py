@@ -853,7 +853,8 @@ class Renderer:
             acc += cv2.warpAffine(small, M, (small.shape[1], small.shape[0]), flags=cv2.INTER_LINEAR) * w_
         acc = cv2.GaussianBlur(acc, (0, 0), 1.2) * (R.get("gain", 0.35) * 3.0 / n)
         acc = cv2.resize(acc, (big.shape[1], big.shape[0]), interpolation=cv2.INTER_LINEAR)
-        cv.screen(x0 - pad, y0 - pad, np.clip(acc * op, 0, 1), hex2rgb(R.get("color", "#FFE600")))
+        rc = tk["rgb"] if tk["t"].get("user_color") else hex2rgb(R.get("color", "#FFE600"))   # raios na cor da palavra
+        cv.screen(x0 - pad, y0 - pad, np.clip(acc * op, 0, 1), rc)
 
     def draw_phrase(self, cv, sc, t):
         fx = self.fx
@@ -899,7 +900,8 @@ class Renderer:
                     gimg, pad = self.glow_img(spr, kind, G)
                     gx = int(round(ax - spr["ox"])) - pad
                     gy = int(round(ay - spr["oy"])) - pad
-                    gc = hex2rgb(G["color"]) if G.get("color") else tk["rgb"]
+                    # cor escolhida pela pessoa na palavra: o brilho acompanha (senão, a cor do brilho do estilo)
+                    gc = tk["rgb"] if tk["t"].get("user_color") or not G.get("color") else hex2rgb(G["color"])
                     ga = np.clip(gimg * op * G.get("opacity", 1.0), 0, 1)
                     if G.get("blend", "normal") == "screen":
                         cv.screen(gx, gy, ga, gc)
@@ -1355,13 +1357,13 @@ class EncoderFailed(Exception):
 
 
 def render_video(preset, plan, out, video=None, size=None, fps=30.0, duration=None, alpha=False,
-                 progress=True, cancel=None, workers=None, gpu=True, crf=18, matte=None):
+                 progress=True, cancel=None, workers=None, gpu=True, crf=18, matte=None, cuts=None):
     """Renderiza o vídeo final (ver _render_video). Se o encoder da placa falhar no meio (driver antigo,
     resolução acima do limite da placa, sessões de NVENC esgotadas), refaz no processador (libx264) e
     deixa o processador como padrão nesta sessão."""
     from .gpu import encoder_failed, hw_encoder
     kw = dict(video=video, size=size, fps=fps, duration=duration, alpha=alpha, progress=progress, cancel=cancel,
-              workers=workers, crf=crf, matte=matte)
+              workers=workers, crf=crf, matte=matte, cuts=cuts)
     hw = gpu and hw_encoder() and not (alpha and not video)
     try:
         return _render_video(preset, plan, out, gpu=gpu, **kw)
@@ -1373,17 +1375,21 @@ def render_video(preset, plan, out, video=None, size=None, fps=30.0, duration=No
 
 
 def _render_video(preset, plan, out, video=None, size=None, fps=30.0, duration=None, alpha=False,
-                  progress=True, cancel=None, workers=None, gpu=True, crf=18, matte=None):
+                  progress=True, cancel=None, workers=None, gpu=True, crf=18, matte=None, cuts=None):
     """Renderiza o vídeo final.
 
     progress: True (imprime), None/False ou função(frame, total).
     cancel:   função que retorna True para interromper.
     gpu:      usa o encoder de hardware do PC (NVIDIA/AMD/Intel) quando houver; senão libx264.
     matte:    função (t, W, H) -> recorte da pessoa (float 0..1) para o texto atrás dela, ou None.
+    cuts:     trechos cortados [[início, fim], …] em segundos do vídeo original: os quadros e o áudio deles
+              ficam fora do arquivo (o resto se junta); a legenda continua no tempo do vídeo original.
     """
     from collections import deque
     from concurrent.futures import ThreadPoolExecutor
     from .gpu import encoder_args
+    cuts = [(float(a), float(b)) for a, b in (cuts or [])]
+    in_cut = (lambda t: any(a <= t < b for a, b in cuts)) if cuts else (lambda t: False)
 
     if video:
         W, H, fps, dur = probe(video)
@@ -1398,6 +1404,7 @@ def _render_video(preset, plan, out, video=None, size=None, fps=30.0, duration=N
     if matte:
         R.matte = lambda t: matte(t, W, H)
     nframes = int(round(dur * fps))
+    total = sum(1 for k in range(nframes) if not in_cut(k / fps))       # quadros que vão para o arquivo
     dec = None
     if video:
         # grade de quadros explícita (fps): é a mesma que o recorte da pessoa usa (matte.compute), então o
@@ -1415,6 +1422,10 @@ def _render_video(preset, plan, out, video=None, size=None, fps=30.0, duration=N
            "-r", f"{fps}", "-i", "-"]
     if video:
         cmd += ["-i", video, "-map", "0:v", "-map", "1:a?", "-c:a", "aac", "-b:a", "192k", "-shortest"]
+        if cuts:
+            # o áudio perde os mesmos trechos que o vídeo (e o tempo dele é refeito para emendar)
+            sel = "+".join(f"between(t,{a:.4f},{b:.4f})" for a, b in cuts)
+            cmd += ["-af", f"aselect='not({sel})',asetpts=N/SR/TB"]
     cmd += enc_args + (["-movflags", "+faststart"] if out.lower().endswith(".mp4") else []) + [out]
     enc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     err = []
@@ -1427,9 +1438,9 @@ def _render_video(preset, plan, out, video=None, size=None, fps=30.0, duration=N
 
     def report(k):
         if callable(progress):
-            progress(k, nframes)
+            progress(k, total)
         elif progress and k % 30 == 0:
-            print(f"\r  renderizando {k}/{nframes} frames", end="", flush=True)
+            print(f"\r  renderizando {k}/{total} frames", end="", flush=True)
 
     try:
         with ThreadPoolExecutor(workers) as ex:
@@ -1442,6 +1453,8 @@ def _render_video(preset, plan, out, video=None, size=None, fps=30.0, duration=N
                     if len(buf) < fsz:
                         break
                     base = np.frombuffer(buf, np.uint8).reshape(H, W, 3)
+                if in_cut(k / fps):
+                    continue              # trecho cortado: o quadro é lido (para manter a grade) e descartado
                 pending.append(ex.submit(R.frame, k / fps, base))
                 while len(pending) >= workers * 2:
                     enc.stdin.write(pending.popleft().result().tobytes())

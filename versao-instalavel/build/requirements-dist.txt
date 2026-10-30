@@ -38,6 +38,11 @@ certifi==2026.10.23
 packaging==26.3
 typing_extensions==4.16.0
 
+# --- atualização automática (conferir a assinatura Ed25519 do latest.json)
+cryptography==47.0.0
+cffi==2.0.0
+pycparser==3.0
+
 # --- onnxruntime-directml
 flatbuffers==25.12.19
 protobuf==7.36.2

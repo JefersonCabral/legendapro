@@ -44,7 +44,8 @@ def start_engine():
     """Devolve a porta: a de um motor já aberto ou a de um novo."""
     for p in range(7860, 7870):
         if not ocupada(p):
-            env = dict(os.environ, PYTHONNOUSERSITE="1", PYTHONUTF8="1")
+            # LEGENDAPRO_LAUNCHER: o motor sabe que tem este ícone por cima (fecha ele junto ao se atualizar)
+            env = dict(os.environ, PYTHONNOUSERSITE="1", PYTHONUTF8="1", LEGENDAPRO_LAUNCHER="1")
             log = open(os.path.join(os.path.expanduser("~"), "Library", "Logs", "LegendaPRO.log"), "a")
             state["proc"] = subprocess.Popen([PY, "-m", "legendapro.server", "--port", str(p), "--no-browser"],
                                              cwd=APP, env=env, stdout=log, stderr=subprocess.STDOUT,
@@ -53,12 +54,19 @@ def start_engine():
                 if e_legendapro(p):
                     break
                 if state["proc"].poll() is not None:
+                    if updating():           # saiu para instalar uma versão nova: o ajudante reabre o app
+                        os._exit(0)
                     raise SystemExit("o motor do LegendaPRO não abriu: veja ~/Library/Logs/LegendaPRO.log")
                 time.sleep(0.5)
             return p
         if e_legendapro(p):
             return p
     raise SystemExit("nenhuma porta livre entre 7860 e 7869")
+
+
+def updating():
+    m = os.path.join(data_dir(), "updates", "instalando")
+    return os.path.exists(m) and time.time() - os.path.getmtime(m) < 300
 
 
 def ui_url():

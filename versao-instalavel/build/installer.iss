@@ -10,11 +10,18 @@
 #ifndef AppVersion
   #define AppVersion "1.0.0"
 #endif
-#define AppName "LegendaPRO"
+; AppName/AppId/SemProtocolo só mudam no teste da atualização automática (instalação separada, sem
+; registrar o legendapro:// nem mexer na instalação de verdade): iscc /DAppName="LegendaPRO Teste" ...
+#ifndef AppName
+  #define AppName "LegendaPRO"
+#endif
+#ifndef AppId
+  #define AppId "{{6B0E3F2A-8C51-4D7E-9A3B-1F2C4D5E6A70}"
+#endif
 #define Src "..\dist\LegendaPRO"
 
 [Setup]
-AppId={{6B0E3F2A-8C51-4D7E-9A3B-1F2C4D5E6A70}
+AppId={#AppId}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
@@ -58,12 +65,15 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\LegendaPRO.bat"; WorkingDir:
 Name: "{autoprograms}\Desinstalar {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\LegendaPRO.bat"; WorkingDir: "{app}"; IconFilename: "{app}\LegendaPRO.ico"; Tasks: desktopicon
 
+#ifndef SemProtocolo
 [Registry]
 ; link legendapro://abrir: o site abre o motor com um clique (por usuário, sem admin; sai na desinstalação)
 Root: HKCU; Subkey: "Software\Classes\legendapro"; ValueType: string; ValueName: ""; ValueData: "URL:LegendaPRO"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\legendapro"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKCU; Subkey: "Software\Classes\legendapro\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\LegendaPRO.ico"
 Root: HKCU; Subkey: "Software\Classes\legendapro\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\LegendaPRO.bat"" ""%1"""
+
+#endif
 
 [Run]
 Filename: "{app}\LegendaPRO.bat"; WorkingDir: "{app}"; Description: "Abrir o LegendaPRO agora"; Flags: postinstall nowait skipifsilent shellexec

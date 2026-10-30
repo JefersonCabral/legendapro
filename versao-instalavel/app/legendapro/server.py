@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import numpy as np
 
-from . import matte, presets, transcript
+from . import matte, presets, transcript, updater
 from . import gpu
 from .gpu import cuda_available
 from .planner import Planner
@@ -160,6 +160,22 @@ def place_behind(plan, style, meta, d):
             g.update(dx=b["dx"], dy=b["dy"], s=b["s"], placed=b["placed"])
 
 
+def norm_cuts(cuts, duration):
+    """Trechos cortados do vídeo ([início, fim] em segundos do vídeo original): em ordem, sem sobreposição,
+    dentro do vídeo, sem pedaços minúsculos. O vídeo original nunca é alterado; o corte vale na prévia e na
+    exportação."""
+    out = []
+    for c in sorted((float(a), float(b)) for a, b in (cuts or []) if b is not None):
+        a, b = max(0.0, min(c)), min(float(duration), max(c))
+        if b - a < 0.02:
+            continue
+        if out and a <= out[-1][1] + 1e-3:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([round(a, 4), round(b, 4)])
+    return out
+
+
 def project_plan(pid):
     d = pdir(pid)
     raw = transcript.load(os.path.join(d, "words.json"))
@@ -168,12 +184,24 @@ def project_plan(pid):
     style = project_style(pid)
     meta = read_meta(pid)
     # o recorte entra na chave: a posição automática do texto atrás depende dele
+    cuts = norm_cuts(meta.get("cuts"), meta.get("duration", 0))
     key = hashlib.sha1((text + json.dumps(style, sort_keys=True) + str(os.path.getmtime(os.path.join(d, "words.json")))
-                        + f"|m{meta.get('matte_v', 0)}").encode()).hexdigest()
+                        + f"|m{meta.get('matte_v', 0)}|c{json.dumps(cuts)}").encode()).hexdigest()
     if key in _plan_cache:
         return key, style, _plan_cache[key]
     words = transcript.align_text(text, raw) if text.strip() else raw
-    plan = Planner(style).plan(words) if words else {"preset": style["name"], "scenes": [], "flashes": []}
+    # palavras dentro de trechos cortados saem da legenda; os tokens continuam apontando (wi) para a posição
+    # da palavra no texto inteiro, para o clique no vídeo achar a palavra certa
+    keep = [i for i, w in enumerate(words) if not any(a <= (w.start + w.end) / 2 < b for a, b in cuts)]
+    kept = [words[i] for i in keep]
+    plan = Planner(style).plan(kept) if kept else {"preset": style["name"], "scenes": [], "flashes": []}
+    if len(keep) != len(words):
+        for sc in plan["scenes"]:
+            for l in sc["lines"]:
+                for t in l["tokens"]:
+                    if 0 <= t.get("wi", -1) < len(keep):
+                        t["wi"] = keep[t["wi"]]
+    keepset = set(keep)
     # onde cada palavra está no text.txt (a interface edita o texto a partir do clique no preview)
     spans = transcript.parse_markup(text, spans=True)[1] if text.strip() else [None] * len(words)
     # palavras que viraram o destaque do estilo (herói / serifada de ênfase), para o botão "Destaque"
@@ -181,8 +209,10 @@ def project_plan(pid):
             if t.get("anim") == "hero" or (t["role"] == "serif" and sc["mode"] == "stack")}
     plan["words"] = [{"start": round(w.start, 3), "end": round(w.end, 3), "span": sp, "emph": i in hero,
                       # trecho {atras} da palavra (índice em plan["groups"]) ou None
-                      "bg": next((int(f.split(":")[1]) for f in w.flags if f.startswith("behind:")), None)}
+                      "bg": next((int(f.split(":")[1]) for f in w.flags if f.startswith("behind:")), None),
+                      "cut": i not in keepset}
                      for i, (w, sp) in enumerate(zip(words, spans))]
+    plan["cuts"] = cuts
     plan["groups"] = transcript.behind_groups(text)
     place_behind(plan, style, meta, d)
     _plan_cache.clear()
@@ -577,7 +607,7 @@ def job_render(pid, kind, opts):
         has_back = any(sc.get("behind") for sc in plan["scenes"])
         try:
             render_video(style, plan, tmp, video=None if alpha else src, size=size,
-                         fps=meta["fps"], duration=meta["duration"], alpha=alpha,
+                         fps=meta["fps"], duration=meta["duration"], alpha=alpha, cuts=plan.get("cuts"),
                          progress=prog, cancel=lambda: job["cancel"],
                          crf=int(opts.get("quality", 18)),
                          matte=(lambda t, W, H: matte.load(d, t, meta["fps"], W, H, cache=False)) if has_back else None)
@@ -1016,6 +1046,11 @@ class Handler(BaseHTTPRequestHandler):
                 meta["overrides"] = b["overrides"]
             if "name" in b:
                 meta["name"] = b["name"][:80]
+            if "cuts" in b:
+                meta["cuts"] = norm_cuts(b["cuts"], meta.get("duration", 0))
+            if "splits" in b:      # divisões da lâmina (só marcam onde um clipe termina; não cortam nada)
+                dur = meta.get("duration", 0)
+                meta["splits"] = sorted({round(float(t), 4) for t in b["splits"] if 0 < float(t) < dur})
             write_meta(pid, meta)
         self.send_json({"ok": True, "style": project_style(pid)})
 
@@ -1043,7 +1078,8 @@ class Handler(BaseHTTPRequestHandler):
         live["matte"] = {"need": matte.count(matte_need(pid, meta, plan)), "v": mv, "model": bool(matte.providers()),
                          "job": job_public(mjob) if mjob else None}
         self.send_json({"key": key, "duration": meta["duration"], "scenes": scenes, "flashes": plan["flashes"],
-                        "words": plan.get("words", []), "groups": plan.get("groups", []), "live": live})
+                        "words": plan.get("words", []), "groups": plan.get("groups", []), "live": live,
+                        "cuts": plan.get("cuts", []), "splits": meta.get("splits", [])})
 
     def api_matte(self, q, pid):
         """Começa (ou devolve) o recorte da pessoa dos trechos {atras} que ainda não têm."""
@@ -1119,6 +1155,38 @@ class Handler(BaseHTTPRequestHandler):
             subprocess.Popen(["xdg-open", d])
         self.send_json({"ok": True})
 
+    # atualização automática -----------------------------------------
+    def api_update(self, q):
+        self.send_json(updater.status())
+
+    def api_update_check(self, q):
+        threading.Thread(target=updater.check, daemon=True).start()
+        time.sleep(0.2)
+        self.send_json(updater.status())
+
+    def api_update_settings(self, q):
+        b = self.body_json()
+        if "auto" in b:
+            updater.save_settings(auto=bool(b["auto"]))
+            if b["auto"]:
+                updater.download()
+        self.send_json(updater.status())
+
+    def api_update_download(self, q):
+        updater.download()
+        self.send_json(updater.status())
+
+    def api_update_install(self, q):
+        busy = [j for j in JOBS.values() if j["status"] == "running"]
+        if busy:
+            return self.send_json({"error": "espere terminar o que está rodando (transcrição, recorte ou exportação)"}, 409)
+        try:
+            updater.install(self.server.server_address[1])
+        except RuntimeError as e:
+            return self.send_json({"error": str(e)}, 400)
+        self.send_json({"ok": True, "version": updater.STATE["latest"]})
+        updater.exit_soon()
+
     def api_job(self, q, jid):
         j = JOBS.get(jid)
         if not j:
@@ -1162,6 +1230,11 @@ ROUTES = [
     ("GET", r"/api/projects/(\w+)/thumb\.jpg", Handler.api_thumb),
     ("POST", r"/api/projects/(\w+)/transcribe", Handler.api_transcribe),
     ("POST", r"/api/projects/(\w+)/render", Handler.api_render),
+    ("GET", r"/api/update", Handler.api_update),
+    ("POST", r"/api/update/check", Handler.api_update_check),
+    ("PUT", r"/api/update", Handler.api_update_settings),
+    ("POST", r"/api/update/download", Handler.api_update_download),
+    ("POST", r"/api/update/install", Handler.api_update_install),
     ("GET", r"/api/jobs/(\w+)", Handler.api_job),
     ("POST", r"/api/jobs/(\w+)/cancel", Handler.api_job_cancel),
     ("GET", r"/files/(\w+)/([^/]+)", Handler.api_files),
@@ -1182,6 +1255,10 @@ def main():
     ap.add_argument("--no-browser", action="store_true")
     a = ap.parse_args()
     from .paths import DATA, sync_presets
+    # versão nova já baixada e conferida: instala antes de abrir (nada rodando) e o ajudante reabre o programa
+    if updater.install_at_startup():
+        os._exit(0)
+    updater.cleanup()
     sync_presets()
     # detecta placas/encoder antes de abrir a porta: assim o /api/status já responde na hora (o lançador
     # usa ele para saber se o LegendaPRO já está aberto)
@@ -1196,6 +1273,7 @@ def main():
     if hw["cuda_pack"]["needed"]:
         print("  Placa NVIDIA encontrada: baixando a aceleração da transcrição em segundo plano (uma vez).\n")
         gpu.install_cuda_pack()
+    updater.start_background_checks()
     if not a.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try:
