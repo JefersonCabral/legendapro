@@ -717,6 +717,13 @@ class Renderer:
                 # a palavra completa no instante em que a próxima começa ("snap")
                 dur = max(min(dur, tt["t_end"] - tin), 1e-3)
                 fade = min(fade, dur)
+            if A.get("duration") != "scene":
+                # fala rápida: a palavra entra perto do fim da legenda. A animação acelera para terminar antes
+                # da saída, senão a legenda some com a palavra ainda no meio do movimento (parece travada)
+                room = (sc["t_out"] - tin) * 0.9
+                if 0 < room < dur:
+                    fade *= room / dur
+                    dur = room
             fe = A.get("fade_ease", "out_quad")
             op = clamp01(p / fade) if fade > 0 else 1.0
             op = ease_out_cubic(op) if fe == "out_cubic" else op if fe == "linear" \

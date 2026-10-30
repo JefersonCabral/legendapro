@@ -438,6 +438,20 @@ def jpeg(arr, q=88, max_h=None):
 
 # ---------------------------------------------------------------- miniaturas de preset
 
+# sobe quando a prévia dos cartões muda de regra (refaz as miniaturas em cache)
+PREVIEW_V = 2
+
+
+def sample_words(style):
+    """Frase de exemplo dos cartões. A palavra "desculpa" vira destaque só se o estilo escolhe destaques
+    sozinho (emphasis_every > 0): nos estilos de destaque só manual (Preset 5, POP) o cartão mostrava um
+    destaque que o vídeo nunca tinha."""
+    words = [transcript.Word(t, s, s + 0.22) for t, s in SAMPLE]
+    if style["rules"].get("emphasis_every", 1) > 0:
+        words[4].flags.add("emph")
+    return words
+
+
 SAMPLE = [("Essa", .0), ("é", .25), ("a", .5), ("sua", .62), ("desculpa", .8), ("favorita.", 1.3)]
 
 
@@ -446,13 +460,12 @@ def preset_thumb(name):
     os.makedirs(cache_dir, exist_ok=True)
     name = presets.resolve(name)
     p = os.path.join(PRESET_DIR, name + ".json")
-    out = os.path.join(cache_dir, name + ".jpg")
+    out = os.path.join(cache_dir, f"{name}.v{PREVIEW_V}.jpg")
     if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(p):
         return open(out, "rb").read()
     style = load_preset(name)
     style = deep_merge(style, {"layout": {"anchor_y": 0.5}, "effects": {"flash": {"enabled": False}}})
-    words = [transcript.Word(t, s, s + 0.22) for t, s in SAMPLE]
-    words[4].flags.add("emph")
+    words = sample_words(style)
     plan = Planner(style).plan(words)
     W, H = 540, 960
     yy = np.linspace(0, 1, H)[:, None, None]
@@ -497,14 +510,13 @@ def preset_anim(name):
     cache_dir = os.path.join(PRESET_DIR, "_thumbs")
     os.makedirs(cache_dir, exist_ok=True)
     p = os.path.join(PRESET_DIR, name + ".json")
-    out = os.path.join(cache_dir, name + ".mp4")
+    out = os.path.join(cache_dir, f"{name}.v{PREVIEW_V}.mp4")
     with _anim_lock:
         if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(p):
             return out
         style = deep_merge(load_preset(name), {"layout": {"anchor_y": 0.5, "offset_x": 0, "offset_y": 0},
                                                "effects": {"flash": {"enabled": False}}})
-        words = [transcript.Word(t, s, s + 0.22) for t, s in SAMPLE]
-        words[4].flags.add("emph")
+        words = sample_words(style)
         plan = Planner(style).plan(words)
         W, H, fps = 540, 960, 24
         yy = np.linspace(0, 1, H)[:, None, None]

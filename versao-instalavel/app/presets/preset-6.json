@@ -99,8 +99,11 @@
     },
     "anim": {
       "plain": {
-        "type": "cut",
-        "reveal": "scene"
+        "type": "fade",
+        "reveal": "word",
+        "duration": 0.32,
+        "fade": 0.32,
+        "dist": 0.0
       },
       "support": {
         "type": "fade",

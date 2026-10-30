@@ -103,8 +103,11 @@
     },
     "anim": {
       "plain": {
-        "type": "cut",
-        "reveal": "scene"
+        "type": "fade",
+        "reveal": "word",
+        "duration": 0.32,
+        "fade": 0.32,
+        "dist": 0.0
       },
       "support": {
         "type": "fade",
@@ -137,8 +140,8 @@
   "rules": {
     "engine": "phrase",
     "emphasis_threshold": 2.4,
-    "emphasis_every": 14.0,
-    "emphasis_gap": 8.0,
+    "emphasis_every": 4.5,
+    "emphasis_gap": 3.0,
     "phrase_max_words": 7,
     "support_max_words": 3,
     "support_max_chars": 18,
