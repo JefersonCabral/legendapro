@@ -288,6 +288,7 @@ Pedido do dono: deixar a ferramenta "online", com o processamento no PC de quem 
 - **Copiar/colar formatação (30/out/2026, cópia online, v1.2.0):** botões no menu da palavra e Alt+C / Alt+V. Copia efeitos (destaque, sem destaque, vermelho, elipse, traço, caixa, solo) e cor; o destaque automático do estilo vira destaque marcado. Colar substitui os efeitos das palavras selecionadas.
 - **Preset POP (`presets/preset-pop.json`, v1.2.0):** motor frase, Poppins Bold branca com sombra, as palavras aparecem uma a uma no tempo da fala (`reveal: "word"`) com pop (`anim.type = "pop"`: `scale_from`, `overshoot`, `duration`; `Renderer.pop_scale`, cresce a partir do centro da palavra). Até 3 palavras por legenda; o controle novo "Palavras por legenda" (`rules.chunk_max_words`, 1–6, todos os presets do motor frase) também sobe `chunk_max_chars` quando precisa. Com 1 palavra por legenda o `merge_short` não junta legendas curtas (pedido explícito). Destaque marcado = amarelo #FFD60A 1,3×.
   - **Nome do arquivo:** `preset-pop`, não `preset-12`: um preset de fábrica com o nome de um "Preset 12" já salvo pela pessoa não seria instalado (`sync_presets` não pisa no dela). Ele aparece por último na lista.
+- **Fundo escuro igual entre presets (v1.2.1):** cada preset tem `effects.gradient` com `top/full/curve` próprios (ex.: Preset 4 curva 2,1 e começa em 30%; Preset 7 curva 1,6), e a curva não aparecia na interface. Por isso, com os mesmos valores visíveis, os blocos ficavam com intensidade e altura diferentes. Agora "Começa em", "Escuro total em" e "Concentração embaixo" (`curve`) aparecem fora dos avançados. Com vários blocos aparece também o botão "Usar este fundo em todos os blocos" (`gradientToAll`: copia o gradiente efetivo inteiro do bloco editado para os ajustes de todos; um passo de desfazer). Controles podem ter `show(st)`; `refreshPlan` chama `syncControls`.
 - **Revisão independente (30/out/2026), corrigido:**
   - o bloco editado só segue a palavra quando a seleção muda (`S.secSel`), e escolher bloco pelo cartão limpa a seleção;
   - os ajustes são guardados por bloco na hora da edição (`ovPending`);
@@ -321,6 +322,8 @@ Pedido do dono: deixar a ferramenta "online", com o processamento no PC de quem 
   - o site só aceita motor que responde com `"engine": "legendapro"`.
 
   Para ver a versão nova no PC do dono sem instalador: `cd versao-instalavel/app && python -m legendapro.server --port 7860` (usa os projetos dele, em `%LOCALAPPDATA%\LegendaPRO`). Antes, conferir se as portas 7860–7869 estão livres.
+- **Testar numa porta fora de 7860–7869 (ex.: 7880).** No Windows, dois servidores conseguem escutar a mesma porta 7860 ao mesmo tempo (o do dono e o de teste), e as requisições caem em qualquer um.
+- **Sempre fechar o motor de teste ao terminar a sessão** (achar o PID com `netstat -ano | grep :7860`). Na v1.2.0 um motor de teste esquecido na 7860 (aberto antes de subir a `VERSION`, então dizia 1.1.1) fez o app instalado do dono "não abrir" e o site mostrar "nova versão disponível" mesmo com a 1.2.0 instalada.
 - **Testes de atualização no Windows:**
   - usar uma pasta curta (`%LOCALAPPDATA%\LPTeste`), porque o caminho longo estoura os 260 caracteres;
   - não deixar terminal (bash com `cd`) dentro da pasta do programa: isso trava a pasta;

@@ -237,9 +237,15 @@ const CONTROLS = [
   { g: "Fundo escuro atrás da legenda", items: [
     { p: "effects.gradient.enabled", l: "Escurecer a parte de baixo do vídeo", t: "switch", always: true },
     { p: "effects.gradient.opacity", l: "Intensidade", t: "range", min: .1, max: 1, step: .01, f: pct },
-    { p: "effects.gradient.top", adv: true, l: "Começa em (altura)", t: "range", min: .2, max: .9, step: .01, f: pct },
-    { p: "effects.gradient.full", adv: true, l: "Escuro total em (altura)", t: "range", min: .4, max: 1, step: .01, f: pct },
+    // forma do fundo: cada preset vem com valores próprios; todos visíveis, senão "iguais" na tela ficavam diferentes no vídeo
+    { p: "effects.gradient.top", l: "Começa em (altura)", t: "range", min: .2, max: .9, step: .01, f: pct },
+    { p: "effects.gradient.full", l: "Escuro total em (altura)", t: "range", min: .4, max: 1, step: .01, f: pct },
+    { p: "effects.gradient.curve", l: "Concentração embaixo", t: "range", min: .5, max: 3, step: .05,
+      f: v => Math.abs(v - 1) < .001 ? "uniforme" : v > 1 ? `mais embaixo (${v.toFixed(2)})` : `sobe mais cedo (${v.toFixed(2)})` },
     { p: "effects.gradient.color", adv: true, l: "Cor", t: "color" },
+    { p: "effects.gradient", l: "Usar este fundo em todos os blocos", t: "button", show: () => multiSec(),
+      hint: "Copia o fundo escuro deste bloco (ligado/desligado, intensidade, altura, curva e cor) para os outros blocos do vídeo.",
+      act: () => gradientToAll() },
   ]},
   { g: "Mistura com o vídeo", adv: true, items: [
     { p: "effects.blend.enabled", l: "Texto se mistura com as cores do vídeo", t: "switch", always: true },
@@ -331,7 +337,7 @@ function syncControls() {
     const c = w._c; const v = getPath(st, c.p);
     const changed = getPath(S.overrides, c.p) !== undefined;
     w.classList.toggle("changed", changed && c.t !== "button");
-    const fits = (v !== undefined || c.always) && (!c.eng || c.eng === eng);
+    const fits = (v !== undefined || c.always) && (!c.eng || c.eng === eng) && (!c.show || c.show(st));
     if (fits && w._adv) { advN++; if (changed) advChanged++; }
     w.style.display = fits && (S.showAdv || !w._adv) ? "" : "none";
     if (c.t === "button") continue;
@@ -483,6 +489,24 @@ async function splitHere() {
     toast(`Bloco ${secNum(id)} criado: escolha o estilo dele`, false, { label: "Desfazer", fn: undo });
   } catch (e) { toast(e.message, true); }
   finally { editing = false; }
+}
+
+// fundo escuro igual em todos os blocos: o gradiente inteiro do bloco editado vira ajuste de cada bloco
+async function gradientToAll() {
+  if (!S.cur || !multiSec()) return;
+  storeEd();
+  const g = structuredClone(merge(S.base, S.overrides).effects?.gradient || {});
+  checkpoint();
+  for (const b of secList()) {
+    const ov = b.id ? (S.secs[b.id] ||= { preset: b.preset, overrides: {} }).overrides : S.cur.overrides;
+    ov.effects = { ...(ov.effects || {}), gradient: structuredClone(g) };
+  }
+  loadEd();
+  try {
+    await api(`/api/projects/${S.cur.id}`, { method: "PUT", body: { overrides: S.cur.overrides, sections: S.secs } });
+  } catch (e) { return toast(e.message, true); }
+  syncControls(); await refreshPlan();
+  toast(`Fundo escuro igual nos ${secList().length} blocos`, false, { label: "Desfazer", fn: undo });
 }
 
 /* ------------------------------------------------------------ presets */
@@ -814,6 +838,7 @@ async function refreshPlan() {
   if (!TL.pending && plan.cuts) { S.cuts = normCuts(plan.cuts, S.cur.duration); S.splits = [...(plan.splits || [])]; }
   S.sel = S.sel.filter(i => i < S.plan.words.length);
   if (!secList().some(x => x.id === S.sec)) selectSec(""); else renderSecBar();   // a divisão do bloco editado saiu
+  syncControls();   // controles que dependem do plano (ex.: "Usar este fundo em todos os blocos")
   liveSetup(); drawTimeline(); showAt(); livePump(); renderRich(); renderPop(); updateExportBadges(); updateMatte();
   if (pendingGroup && !S.dirty) {   // tamanho/posição de trecho que chegou enquanto o texto mudava
     const pg = pendingGroup; pendingGroup = null;
