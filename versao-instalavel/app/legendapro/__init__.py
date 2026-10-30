@@ -1,6 +1,6 @@
 """LegendaPRO: motor de legendas dinâmicas."""
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 API = 1      # sobe quando a interface do site e o motor deixam de ser compatíveis
 
 # Sites que podem usar este motor pelo navegador (a interface hospedada no Cloudflare Pages).

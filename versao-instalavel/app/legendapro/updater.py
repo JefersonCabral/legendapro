@@ -31,7 +31,7 @@ from .paths import APP, DATA
 MANIFEST_URL = os.environ.get("LEGENDAPRO_UPDATE_URL") or \
     "https://github.com/JefersonCabral/legendapro/releases/latest/download/latest.json"
 # chave pública da assinatura (a privada fica nos segredos do GitHub: LEGENDAPRO_UPDATE_KEY)
-PUBKEY = os.environ.get("LEGENDAPRO_UPDATE_PUBKEY") or "tJn/Tsfx/ZP/xdlP1WbnWe4aYQJHBf7CBwwQZqQT+zw="
+PUBKEY = os.environ.get("LEGENDAPRO_UPDATE_PUBKEY") or "9xtoDZZ/dNgT0TLSfjnjOkhI4t9Y+VPOEgU63BQmmF4="
 CHECK_EVERY = 6 * 3600
 UPD_DIR = os.path.join(DATA, "updates")
 SETTINGS = os.path.join(DATA, "atualizacao.json")
