@@ -207,15 +207,47 @@ Pedido do dono: deixar a ferramenta "online", com o processamento no PC de quem 
   - `make_site.py` copia `app/ui` para `site/app`.
 - `site/`: página de download, o app em `/app/` e `_headers` com CSP própria para `/app/*`, sem `upgrade-insecure-requests`.
 - **Domínio ainda não definido:** `SITE_ORIGINS` em `app/legendapro/__init__.py` aceita `legendapro.pages.dev`. Trocar quando o dono decidir e gerar o instalador de novo.
+
+### Estado em 30/out/2026 (fim do dia)
+
+- **No ar:**
+  - **Site:** https://legendapro.pages.dev. O app fica em `/app/`.
+  - **Deploy do site:** o Cloudflare Pages está ligado ao GitHub (projeto `legendapro`, branch `main`, saída `versao-instalavel/site`, sem build). Cada push na `main` publica sozinho.
+  - **Instaladores:** Release **v1.1.1** em https://github.com/JefersonCabral/legendapro/releases. Tem `.exe`, zip, os dois `.dmg` e o `latest.json` **assinado** (conferido).
+  - **Links do site:** `releases/latest/download/<arquivo>`, que sempre aponta para a versão mais nova. Os botões de Windows e de Mac aparecem sempre, e o do sistema de quem acessa fica em destaque.
+- **Como soltar uma versão:**
+  1. subir `VERSION` em `app/legendapro/__init__.py`, `site/config.js` e o `vX` do `site/index.html`;
+  2. commit e push na `main`; esperar o `motor.yml` passar (Windows, Mac arm64 e Mac Intel; uns 15 min);
+  3. `git tag -a vX && git push origin vX`.
+
+  A tag gera a Release e o job `manifesto` assina o `latest.json`.
+  - Runs antigos da `main` ocupam as máquinas Mac e deixam a tag na fila: o dono cancela pelo "⋯ → Cancel run".
+  - O `hdiutil` às vezes dá "Resource busy". O `build_mac.sh` tenta 5 vezes.
+- **Chave de assinatura das atualizações:**
+  - **Segredo e arquivo:** o segredo `LEGENDAPRO_UPDATE_KEY` está no GitHub, e o arquivo fica em `%USERPROFILE%\.legendapro\chave-atualizacao-PRIVADA.txt`. A pública `tJn/…+zw=` está em `updater.py`.
+  - **A chave está exposta:** o dono colou a privada na conversa e **decidiu mantê-la**. Foi oferecido trocar; o par alternativo ficou como `*-nao-usada.txt`.
+  - **Para trocar:** gerar o par novo, pôr a pública em `updater.py`, atualizar o segredo e soltar versão. Quem estiver na versão antiga precisa baixar a nova uma vez.
+- **Instalação do dono:** ele desinstalou a 1.0.0 e vai instalar a 1.1.1 por conta própria (Windows e Mac).
+- **Comparação original × online:**
+  - vídeos exportados idênticos pixel a pixel nos 11 presets;
+  - prévia do navegador igual;
+  - parecia diferente porque os dois projetos estavam em presets diferentes e um deles tinha edições.
+
+### Pendências
+
+- **Mac num Mac de verdade:** testar a barra de menu, o `legendapro://`, a primeira abertura, o uso pelo site no Chrome, o Safari e a atualização automática pelo `atualizar.sh`.
+- **Smart App Control:** o Controle Inteligente de Aplicativos do Windows 11 está **ligado no PC do dono** e bloqueou o `unins000.exe` do teste ("Uma política de Controle de Aplicativo bloqueou este arquivo"). Ele pode bloquear o instalador em outros PCs, sem opção de "executar assim mesmo". A solução é um certificado de assinatura de código; levar opções e custos quando o dono quiser.
+- **Original:** o `legendapro/` ainda tem o bug do brilho em paralelo e não tem o corte, os dois destaques nem a cor do brilho. O dono pediu para não mexer.
+- **Corte:** os clipes ainda não se reordenam nem se aparam pelas bordas; no play pode escapar ~1 quadro do trecho cortado.
 - **Mac:** o motor está preparado no mesmo código (`build/mac/`, ver o LEIA-ME de lá):
   - transcrição com mlx-whisper no chip Apple; reserva com faster-whisper;
   - recorte com CoreML;
   - exportação com VideoToolbox;
   - app na barra de menu (rumps), com link `legendapro://` via Apple Event;
-  - `.dmg` gerado e testado no GitHub Actions (`.github/workflows/mac.yml`, chip Apple em `macos-15` e Intel em `macos-15-intel`), com o teste com aceleração e com `LEGENDAPRO_FORCE_CPU=1`. O runner arm64 tem Metal: lá rodam de verdade o MLX e o VideoToolbox.
+  - `.dmg` gerado e testado no GitHub Actions (`.github/workflows/motor.yml`, que também monta o Windows; chip Apple em `macos-15` e Intel em `macos-15-intel`), com o teste com aceleração e com `LEGENDAPRO_FORCE_CPU=1`. O runner arm64 tem Metal: lá rodam de verdade o MLX e o VideoToolbox.
   - Logs dos jobs exigem admin; o `ci_smoke.py` publica cada etapa como anotação (`::notice::`/`::error::`), que a API pública de check-runs devolve.
   - O dono **não tem conta de desenvolvedor Apple**. O Mac dele é chip M, modelo desconhecido. A assinatura é ad hoc e a primeira abertura pede "Abrir mesmo assim".
-  - `DOWNLOAD_URL_MAC` vazio no `site/config.js` faz o site mostrar "em breve". **Falta o dono testar no Mac dele.**
+  - O download do Mac já está **liberado** no site (`DOWNLOAD_URL_MAC` no `site/config.js`; vazio volta a "em breve"). **Falta o dono testar no Mac dele.**
 - **Fixações que importam:**
   - `av==18.0.0`: o faster-whisper 1.2.1 usa `metadata_errors`, que a av 19 tirou;
   - mlx-whisper com `--no-deps`: ele declara o torch só para converter modelos;
@@ -263,6 +295,17 @@ Pedido do dono: deixar a ferramenta "online", com o processamento no PC de quem 
 ## Lições operacionais
 
 - Nunca matar todos os processos python. Para parar o servidor, achar o PID com `netstat -ano | grep :7860` e matar só esse.
+- **Vários LegendaPRO ao mesmo tempo atrapalham os testes:**
+  - o lançador (`iniciar.py`) vê outro motor numa porta e conclui que "já está aberto";
+  - o site só aceita motor que responde com `"engine": "legendapro"`.
+
+  Para ver a versão nova no PC do dono sem instalador: `cd versao-instalavel/app && python -m legendapro.server --port 7860` (usa os projetos dele, em `%LOCALAPPDATA%\LegendaPRO`). Antes, conferir se as portas 7860–7869 estão livres.
+- **Testes de atualização no Windows:**
+  - usar uma pasta curta (`%LOCALAPPDATA%\LPTeste`), porque o caminho longo estoura os 260 caracteres;
+  - não deixar terminal (bash com `cd`) dentro da pasta do programa: isso trava a pasta;
+  - conectar numa porta fechada de 127.0.0.1 no Windows leva ~2 s, então listar as portas abertas com `Get-NetTCPConnection` antes;
+  - o Smart App Control pode bloquear `.exe` sem assinatura no meio do teste.
+- **Chaves e senhas:** se o dono colar uma chave ou senha na conversa, avisar do risco e oferecer a troca; a decisão é dele.
 - Não contornar bloqueios de remoção com glob. Usar uma pasta nova.
 - Rodar renders pesados em sequência, não em paralelo: a GPU tem só 4 GB.
 - No git ficam fora: `projects/`, `projects_cli/`, `out/`, `ref/`, `analysis/`, `presets/_thumbs/`, `models/` e arquivos de vídeo.
